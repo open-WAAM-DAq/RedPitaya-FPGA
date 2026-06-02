@@ -1,4 +1,5 @@
 *.log
+*.jou
 *.txt*
 prj/**/.gen
 prj/**/.Xil
