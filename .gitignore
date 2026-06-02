@@ -1,0 +1,7 @@
+*.log
+*.txt*
+prj/**/.gen
+prj/**/.Xil
+prj/**/.srcs
+prj/**/out
+prj/**/sdk
