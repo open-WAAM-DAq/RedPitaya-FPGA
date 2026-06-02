@@ -27,8 +27,7 @@ set path_brd ../../brd
 set path_rtl rtl
 set path_ip      ip
 set path_ip_top  ../../ip
-#set path_bd  .srcs/sources_1/bd/system
-set path_bd  .srcs/sources_1/bd/system/hdl
+set path_bd  .gen/sources_1/bd/system/hdl
 set path_sdc ../../sdc
 set path_sdc_prj sdc
 
@@ -176,8 +175,18 @@ write_bitstream -force -bin_file  $path_out/red_pitaya
 # generate system definition
 ################################################################################
 
-write_sysdef -force      -hwdef   $path_sdk/red_pitaya.hwdef \
-                         -bitfile $path_out/red_pitaya.bit \
-                         -file    $path_sdk/red_pitaya.sysdef
+if {[file exists $path_sdk/red_pitaya.xsa]} {
+    write_hw_platform   -fixed \
+                        -force \
+                        -include_bit \
+                        -file $path_sdk/red_pitaya.xsa
+} else {
+    write_sysdef        -force \
+                        -hwdef   $path_sdk/red_pitaya.hwdef \
+                        -bitfile $path_out/red_pitaya.bit \
+                        -file    $path_sdk/red_pitaya.sysdef
+}
+
+
 
 exit

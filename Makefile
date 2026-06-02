@@ -15,7 +15,7 @@ PRJ   ?= v0.94
 MODEL ?= Z20_G2
 HWID  ?= ""
 DEFINES ?= ""
-DTS_VER ?= 2022.1
+DTS_VER ?= 2025.2
 VIVADO_OPTS ?= 
 
 # build artefacts
@@ -40,7 +40,7 @@ all: $(FPGA_BIT) $(FSBL_ELF) $(DEVICE_TREE) $(FPGA_BIN)
 # TODO: clean should go into each project
 clean:
 	rm -rf out .Xil .srcs sdk project sim
-	rm -rf prj/$(PRJ)/out prj/$(PRJ)/.Xil prj/$(PRJ)/.srcs prj/$(PRJ)/sdk prj/$(PRJ)/project
+	rm -rf prj/$(PRJ)/out prj/$(PRJ)/.Xil prj/$(PRJ)/.srcs prj/$(PRJ)/sdk prj/$(PRJ)/project prj/$(PRJ)/.gen
 
 sim: 
 	vivado -source red_pitaya_vivado_sim.tcl -tclargs $(PRJ) $(MODEL) $(DEFINES)
@@ -58,7 +58,7 @@ ifneq ($(HWID),"")
 else
 	$(VIVADO) -source red_pitaya_vivado_$(MODEL).tcl -tclargs $(PRJ) $(DEFINES)
 endif
-	./synCheck.sh
+	bash synCheck.sh
 
 $(FSBL_ELF): $(FPGA_BIT)
 	xsct red_pitaya_hsi_fsbl.tcl $(PRJ)
