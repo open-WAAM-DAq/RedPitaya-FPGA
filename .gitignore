@@ -6,3 +6,4 @@ prj/**/.Xil
 prj/**/.srcs
 prj/**/out
 prj/**/sdk
+prj/*/**/project
