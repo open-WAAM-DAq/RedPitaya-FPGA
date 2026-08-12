@@ -1,4 +1,5 @@
-set_property LOC XADC_X0Y0 [get_cells i_ams/XADC_inst]
+# NOTE: commented out to mitigate devicetree issue
+#set_property LOC XADC_X0Y0 [get_cells xadc]
 
 ############################################################################
 # Clock constraints                                                        #
