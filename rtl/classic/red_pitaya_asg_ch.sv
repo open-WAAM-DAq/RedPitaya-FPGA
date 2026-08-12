@@ -123,6 +123,7 @@ wire  [PNT_SIZE-1: 0] axi_pnt   ; // read pointer AXI
 reg   [PNT_SIZE-1: 0] axi_pntp  ; // previous read pointer AXI
 wire  [PNT_SIZE  : 0] dac_npnt  ; // next read pointer
 wire  [PNT_SIZE  : 0] dac_npnt_sub ;
+reg   [PNT_SIZE  : 0] dac_pnt_rem ; // precomputed step-size delta for wrap decision
 wire                  dac_npnt_sub_neg;
 wire                  axi_dac_do;
 wire                  axi_init;
@@ -341,7 +342,7 @@ end
 
 assign dac_trig = (!dac_rep && trig_in) || (dac_rep && |rep_cnt && (dly_cnt == 32'h0) && (cyc_cnt == 16'h0) && ~dac_do && !buf_cycle) ;
 
-assign dac_npnt_sub = dac_npnt - {1'b0,set_size_i,32'h0} - 1;
+assign dac_npnt_sub = {1'b0,dac_pnt} + dac_pnt_rem;
 assign dac_npnt_sub_neg = dac_npnt_sub[PNT_SIZE];
 
 // read pointer logic
@@ -349,6 +350,7 @@ always @(posedge dac_clk_i)
 if (dac_rstn_i == 1'b0) begin
    dac_pnt  <= {PNT_SIZE{1'b0}};
 end else begin
+   dac_pnt_rem <= {1'b0,set_step_i[RSZ+15:0],set_step_lo_i} - {1'b0,set_size_i,32'h0} - 1;
    if (set_rst_i || (dac_trig && !dac_do)) // manual reset or start
       dac_pnt <= {set_ofs_i[RSZ+15:0],32'h0};
    else if (dac_do) begin
