@@ -10,14 +10,12 @@ set prj_name [lindex $argv 0]
 cd prj/$prj_name
 
 set path_sdk sdk
+set xsa_file $path_sdk/red_pitaya.xsa
+set output_dir out/dts
+set output_dir2 out/dts2
 
-if {[file exists $path_sdk/red_pitaya.xsa]} {
-    hsi open_hw_design $path_sdk/red_pitaya.xsa
-} else {
-    hsi open_hw_design $path_sdk/red_pitaya.sysdef
-}
 
-set ver 2017.2
+set ver 2025.1
 
 puts "Input arguments: $argv"
 foreach item $argv {
@@ -37,16 +35,32 @@ foreach item $argv {
         }
     }
 }
+
 puts "DTS version: $ver"
+puts "Cur dir: [pwd]"
+
+#  The old method of creating a device tree is now deprecated.
+##hsi open_hw_design $xsa_file
+##hsi open_hw_design $path_sdk/red_pitaya.sysdef
+#hsi set_repo_path ../../dl/device-tree-xlnx-xilinx-v$ver/
+#hsi create_sw_design device-tree -os device_tree -proc ps7_cortexa9_0
+#hsi set_property CONFIG.kernel_version $ver [hsi get_os]
+#hsi set_property CONFIG.dt_overlay true [hsi::get_os]
+#hsi generate_target -dir $output_dir
+
+#########################################################################
+
+# New method for creating device tree, does not support overlay yet.
+
+#sdtgen set_dt_param -xsa $xsa_file -dir $output_dir2
+#sdtgen set_dt_param -repo ../../dl/device-tree-xlnx-xilinx-v$ver/
+#sdtgen generate_sdt
+
+#########################################################################
 
 
-hsi set_repo_path ../../../device-tree-xlnx/
+createdts -hw $xsa_file -platform-name redpitaya_platform -git-branch xlnx_rel_v$ver -overlay -out $output_dir
 
-hsi create_sw_design device-tree -os device_tree -proc ps7_cortexa9_0
+file copy -force $output_dir/out/dts/redpitaya_platform/ps7_cortexa9_0/device_tree_domain/bsp $path_sdk/dts
 
-hsi set_property CONFIG.kernel_version $ver [hsi get_os]
-hsi set_property CONFIG.dt_overlay true [hsi get_os]
-
-hsi generate_target -dir $path_sdk/dts
-
-exit
+puts "INFO: Device Tree generation complete."
