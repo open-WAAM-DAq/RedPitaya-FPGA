@@ -196,30 +196,33 @@ set_property PACKAGE_PIN J14     [get_ports {led_o[7]}]
 #NET "adc_clk" TNM_NET = "adc_clk";
 #TIMESPEC TS_adc_clk = PERIOD "adc_clk" 125 MHz;
 
+# Primary clock from external ADC clock input (125 MHz)
 create_clock -period 8.000 -name adc_clk [get_ports adc_clk_i[1]]
 
 set_input_delay -clock adc_clk 3.400 [get_ports adc_dat_i[*][*]]
 
+# RX clock from daisy chain (250 MHz)
 create_clock -period 4.000 -name rx_clk  [get_ports daisy_p_i[1]]
 
-create_clock -period 8.000 -name dac_clk_o  [get_ports dac_clk_o]
-create_clock -period 8.000 -name dac_clk_o  [get_ports dac_clk_1x]
-create_clock -period 8.000 -name dac_clk_o  [get_ports dac_clk_2x]
-create_clock -period 8.000 -name dac_clk_o  [get_ports dac_clk_2p]
+# Generated clocks from PLL
+# PLL takes adc_clk_in (125MHz) and generates multiple outputs
+# CLKOUT0: pll_adc_clk -> 125MHz (DIV=8)
+# CLKOUT1: pll_dac_clk_1x -> 125MHz (DIV=8)
+# CLKOUT2: pll_dac_clk_2x -> 250MHz (DIV=4)
+# CLKOUT3: pll_dac_clk_2p -> 250MHz with -45 degree phase (DIV=4)
+# CLKOUT4: pll_ser_clk -> 250MHz (DIV=4)
+# CLKOUT5: pll_pwm_clk -> 250MHz (DIV=4)
 
-set_false_path -from [get_clocks adc_clk]     -to [get_clocks dac_clk_o]
-set_false_path -from [get_clocks adc_clk]     -to [get_clocks dac_clk_2x]
-set_false_path -from [get_clocks adc_clk]     -to [get_clocks dac_clk_2p]
-set_false_path -from [get_clocks pll_adc_clk] -to [get_clocks pll_dac_clk_2x]
-set_false_path -from [get_clocks adc_clk]     -to [get_clocks pll_adc_clk]
+create_generated_clock -source [get_pins pll/CLKIN1] -name pll_adc_clk -divide_by 1 [get_pins pll/CLKOUT0]
+create_generated_clock -source [get_pins pll/CLKIN1] -name pll_dac_clk_1x -divide_by 1 [get_pins pll/CLKOUT1]
+create_generated_clock -source [get_pins pll/CLKIN1] -name pll_dac_clk_2x -divide_by 1 [get_pins pll/CLKOUT2]
+create_generated_clock -source [get_pins pll/CLKIN1] -name pll_dac_clk_2p -divide_by 1 [get_pins pll/CLKOUT3]
+create_generated_clock -source [get_pins pll/CLKIN1] -name pll_ser_clk -divide_by 1 [get_pins pll/CLKOUT4]
+create_generated_clock -source [get_pins pll/CLKIN1] -name pll_pwm_clk -divide_by 1 [get_pins pll/CLKOUT5]
 
-set_false_path -from [get_clocks par_clk]     -to [get_clocks pll_adc_clk]
+# Clock for output DAC clock port (125 MHz)
+create_clock -period 8.000 -name dac_clk_o [get_ports dac_clk_o]
 
-set_false_path -from [get_clocks clk_fpga_0]  -to [get_clocks dac_clk_1x]
-set_false_path -from [get_clocks clk_fpga_0]  -to [get_clocks dac_clk_2x]
-set_false_path -from [get_clocks clk_fpga_0]  -to [get_clocks dac_clk_2p]
-set_false_path -from [get_clocks clk_fpga_0]  -to [get_clocks ser_clk]
-set_false_path -from [get_clocks clk_fpga_0]  -to [get_clocks pdm_clk]
-set_false_path -from [get_clocks dac_clk_o] -to [get_clocks dac_clk_2x]
-set_false_path -from [get_clocks dac_clk_o] -to [get_clocks dac_clk_2p]
-set_false_path -from [get_clocks pll_adc_clk] -to [get_clocks par_clk]
+# False path constraints
+set_false_path -from [get_clocks adc_clk] -to [get_clocks dac_clk_o]
+set_false_path -from [get_clocks adc_clk] -to [get_clocks rx_clk]
