@@ -206,19 +206,25 @@ create_clock -period 4.000 -name rx_clk  [get_ports daisy_p_i[1]]
 
 # Generated clocks from PLL
 # PLL takes adc_clk_in (125MHz) and generates multiple outputs
-# CLKOUT0: pll_adc_clk -> 125MHz (DIV=8)
-# CLKOUT1: pll_dac_clk_1x -> 125MHz (DIV=8)
-# CLKOUT2: pll_dac_clk_2x -> 250MHz (DIV=4)
-# CLKOUT3: pll_dac_clk_2p -> 250MHz with -45 degree phase (DIV=4)
-# CLKOUT4: pll_ser_clk -> 250MHz (DIV=4)
-# CLKOUT5: pll_pwm_clk -> 250MHz (DIV=4)
+# PLL Configuration:
+#   CLKIN1_PERIOD = 8.000 (125 MHz input)
+#   CLKFBOUT_MULT = 8 (VCO = 1000 MHz)
+#   CLKOUT0_DIVIDE = 8 -> pll_adc_clk: 1000/8 = 125 MHz
+#   CLKOUT1_DIVIDE = 8 -> pll_dac_clk_1x: 1000/8 = 125 MHz
+#   CLKOUT2_DIVIDE = 4 -> pll_dac_clk_2x: 1000/4 = 250 MHz
+#   CLKOUT3_DIVIDE = 4 -> pll_dac_clk_2p: 1000/4 = 250 MHz
+#   CLKOUT4_DIVIDE = 4 -> pll_ser_clk: 1000/4 = 250 MHz
+#   CLKOUT5_DIVIDE = 4 -> pll_pwm_clk: 1000/4 = 250 MHz
 
-create_generated_clock -source [get_pins pll/CLKIN1] -name pll_adc_clk -divide_by 1 [get_pins pll/CLKOUT0]
-create_generated_clock -source [get_pins pll/CLKIN1] -name pll_dac_clk_1x -divide_by 1 [get_pins pll/CLKOUT1]
-create_generated_clock -source [get_pins pll/CLKIN1] -name pll_dac_clk_2x -divide_by 1 [get_pins pll/CLKOUT2]
-create_generated_clock -source [get_pins pll/CLKIN1] -name pll_dac_clk_2p -divide_by 1 [get_pins pll/CLKOUT3]
-create_generated_clock -source [get_pins pll/CLKIN1] -name pll_ser_clk -divide_by 1 [get_pins pll/CLKOUT4]
-create_generated_clock -source [get_pins pll/CLKIN1] -name pll_pwm_clk -divide_by 1 [get_pins pll/CLKOUT5]
+# For PLLE2_ADV, use -multiply_by and -divide_by to model the PLL behavior
+# Formula: output_freq = input_freq * CLKFBOUT_MULT / CLKOUTx_DIVIDE
+# So: divide_by = CLKOUTx_DIVIDE, multiply_by = CLKFBOUT_MULT
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_adc_clk -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT0]
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_1x -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT1]
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_2x -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT2]
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_2p -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT3]
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_ser_clk -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT4]
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_pwm_clk -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT5]
 
 # Clock for output DAC clock port (125 MHz)
 create_clock -period 8.000 -name dac_clk_o [get_ports dac_clk_o]

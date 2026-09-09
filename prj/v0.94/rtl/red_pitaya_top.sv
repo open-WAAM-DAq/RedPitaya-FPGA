@@ -167,7 +167,8 @@ logic                 pll_adc_clk;
 logic                 pll_dac_clk_1x;
 logic                 pll_dac_clk_2x;
 logic                 pll_dac_clk_2p;
-logic                 pll_ser_clk;
+// Removed pll_ser_clk - using fclk[1] from PS instead
+//logic                 pll_ser_clk;
 logic                 pll_pwm_clk;
 logic                 pll_locked;
 logic                 pll_locked_r;
@@ -205,7 +206,7 @@ SBA_T [MNA-1:0]          adc_dat;
 logic                    dac_clk_1x;
 logic                    dac_clk_2x;
 logic                    dac_clk_2p;
-logic                    dac_axi_clk;
+// Removed dac_axi_clk - using dac_clk_2x directly
 logic                    dac_rst;
 logic                    dac_axi_rstn;
 
@@ -232,8 +233,8 @@ gpio_if #(.DW (3*GDW)) gpio ();
 // AXI masters
 axi_sys_if axi0_sys (.clk(adc_clk    ), .rstn(adc_rstn    ));
 axi_sys_if axi1_sys (.clk(adc_clk    ), .rstn(adc_rstn    ));
-axi_sys_if axi2_sys (.clk(dac_axi_clk), .rstn(dac_axi_rstn));
-axi_sys_if axi3_sys (.clk(dac_axi_clk), .rstn(dac_axi_rstn));
+axi_sys_if axi2_sys (.clk(dac_clk_2x), .rstn(dac_axi_rstn));
+axi_sys_if axi3_sys (.clk(dac_clk_2x), .rstn(dac_axi_rstn));
 ////////////////////////////////////////////////////////////////////////////////
 // PLL (clock and reset)
 ////////////////////////////////////////////////////////////////////////////////
@@ -251,7 +252,8 @@ red_pitaya_pll pll (
   .clk_dac_1x  (pll_dac_clk_1x),  // DAC clock 125MHz
   .clk_dac_2x  (pll_dac_clk_2x),  // DAC clock 250MHz
   .clk_dac_2p  (pll_dac_clk_2p),  // DAC clock 250MHz -45DGR
-  .clk_ser     (pll_ser_clk   ),  // fast serial clock
+  // Removed clk_ser connection - using fclk[1] from PS instead
+  //.clk_ser     (pll_ser_clk   ),  // fast serial clock
   .clk_pdm     (pll_pwm_clk   ),  // PWM clock
   // status outputs
   .pll_locked  (pll_locked    )
@@ -260,11 +262,14 @@ red_pitaya_pll pll (
 BUFG bufg_adc_clk     (.O (adc_clk    ), .I (pll_adc_clk   ));
 BUFG bufg_dac_clk_1x  (.O (dac_clk_1x ), .I (pll_dac_clk_1x));
 BUFG bufg_dac_clk_2x  (.O (dac_clk_2x ), .I (pll_dac_clk_2x));
-BUFG bufg_dac_axi_clk (.O (dac_axi_clk), .I (pll_dac_clk_2x));
+// Removed bufg_dac_axi_clk - use dac_clk_2x directly instead
 
-BUFG bufg_dac_clk_2p (.O (dac_clk_2p), .I (pll_dac_clk_2p));
-BUFG bufg_ser_clk    (.O (ser_clk   ), .I (pll_ser_clk   ));
-BUFG bufg_pwm_clk    (.O (pwm_clk   ), .I (pll_pwm_clk   ));
+// Removed bufg_dac_clk_2p - use pll_dac_clk_2p directly to save BUFG
+assign dac_clk_2p = pll_dac_clk_2p;
+// Removed bufg_ser_clk - use fclk[1] (250 MHz) from PS instead to save BUFG
+assign ser_clk = fclk[1];
+// Removed bufg_pwm_clk - use pll_pwm_clk directly to save BUFG resources
+assign pwm_clk = pll_pwm_clk;
 
 always @(posedge fclk[0]) begin
   fpll_locked_r   <= pll_locked;
@@ -296,7 +301,7 @@ always @(posedge dac_clk_1x)
 dac_rst      <= ~frstn[0] |  rst_after_locked;
 
 // DAC AXI reset (active low)
-always @(posedge dac_axi_clk)
+always @(posedge dac_clk_2x)
 dac_axi_rstn <=  frstn[0] & ~rst_after_locked;
 
 // PWM reset (active low)

@@ -336,6 +336,7 @@ always @(*) begin
       3'h3 : begin txp_dat[GV*16 +: 16] <= 16'h00FF               ;   txp_dv[GV] <= txp_rdy[GV]  ; end  // training data
       3'h4 : begin txp_dat[GV*16 +: 16] <= tx_rx_dat              ;   txp_dv[GV] <= tx_rx_dv     ; end  // send back received data
       3'h5 : begin txp_dat[GV*16 +: 16] <= tst_dat[GV*16 +: 16]   ;   txp_dv[GV] <= tst_dv[GV]   ; end  // random testing data
+      default : begin txp_dat[GV*16 +: 16] <= 16'h0              ;   txp_dv[GV] <= 1'b0         ; end  // default case to prevent latch inference
    endcase
 end
 
