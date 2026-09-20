@@ -363,8 +363,7 @@ wire dac_trig_axi  = (!dac_rep && trig_in) || (rep_arm && (rep_idle || rep_end_p
 
 assign dac_trig = (!dac_rep && trig_in) || (rep_arm && (rep_idle || rep_end)) ;
 
-assign dac_npnt_sub = dac_npnt - {1'b0,set_size_i,32'h0} - 1;
-assign dac_npnt_sub_neg = dac_npnt_sub[PNT_SIZE];
+assign dac_npnt_sub_neg = dac_npnt < ({1'b0,set_size_i,32'h0} + 1'b1);
 
 // read pointer logic
 always @(posedge dac_clk_i)

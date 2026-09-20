@@ -16,7 +16,6 @@
 
 # ADC data
 set_property IOSTANDARD LVCMOS18 [get_ports {adc_dat_i[*][*]}]
-set_property IOB        TRUE     [get_ports {adc_dat_i[*][*]}]
 
 # ADC 0 data
 set_property PACKAGE_PIN V17     [get_ports {adc_dat_i[0][0]}]
@@ -223,10 +222,10 @@ create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_adc_clk -divi
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_1x -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT1]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_2x -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT2]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_2p -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT3]
-create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_ser_clk -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT4]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_pwm_clk -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT5]
 
-# Clock for output DAC clock port (125 MHz)
+# Keep dac_clk_o as an external interface clock. Modeling the ODDR output as a
+# generated clock created an inter-clock setup path back into pll_dac_clk_1x.
 create_clock -period 8.000 -name dac_clk_o [get_ports dac_clk_o]
 
 # False path constraints

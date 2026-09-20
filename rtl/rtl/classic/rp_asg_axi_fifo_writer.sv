@@ -58,14 +58,19 @@ logic [AW-1:0] start_addr_q;
 logic [AW-1:0] stop_addr_q;
 logic [AW-1:0] issue_addr_q;
 logic [AW-1:0] req_next_addr_q;
+logic [AW-1:0] issue_addr_next_q;
+logic [AW-1:0] issue_addr_next_l1_q;
 logic [AW-1:0] stream_addr_q;
 logic [AW-1:0] current_beat_addr_q;
 logic [AW-1:0] stop_addr_eff_c;
 
 logic [ISSUE_BEAT_W-1:0] issue_beats_c;
+logic [ISSUE_BEAT_W-1:0] issue_beats_l1_q;
 logic [ISSUE_BEAT_W-1:0] req_beats_q;
 logic [LW-1:0] issue_len_c;
+logic [LW-1:0] issue_len_l1_q;
 logic [AW-1:0] issue_words_left_c;
+logic [AW-1:0] issue_words_left_l1_q;
 logic [AW-1:0] issue_addr_next_c;
 logic [AW-1:0] stream_words_left_c;
 
@@ -190,7 +195,7 @@ end
 //  Request generation
 
 always_comb begin
-  stop_addr_eff_c   = stop_addr_q + AW'(32'd4);
+  stop_addr_eff_c    = stop_addr_q + AW'(32'd4);
   issue_words_left_c = '0;
   stream_words_left_c = '0;
 
@@ -213,6 +218,20 @@ always_comb begin
     issue_addr_next_c = issue_addr_q + (AW'(issue_beats_c) << AXI_ADDR_SHIFT);
 end
 
+always_ff @(posedge axi_sys.clk) begin
+  if (!axi_sys.rstn) begin
+    issue_words_left_l1_q <= '0;
+    issue_beats_l1_q      <= '0;
+    issue_len_l1_q        <= '0;
+    issue_addr_next_l1_q  <= '0;
+  end else begin
+    issue_words_left_l1_q <= issue_words_left_c;
+    issue_beats_l1_q      <= issue_beats_c;
+    issue_len_l1_q        <= issue_len_c;
+    issue_addr_next_l1_q  <= issue_addr_next_c;
+  end
+end
+
 always_comb begin
   expected_fifo_lvl = EXPECT_LVL_W'(dat_wr_fifo_lvl) + EXPECT_LVL_W'(outstanding_beats_q);
 end
@@ -220,7 +239,7 @@ end
 assign prefetch_issue = (wr_state_q == WR_RUN) &&
                         !fsm_reset_sync &&
                         !axi_sys.rvalid &&
-                        (issue_beats_c != {ISSUE_BEAT_W{1'b0}}) &&
+                        (issue_beats_l1_q != {ISSUE_BEAT_W{1'b0}}) &&
                         (outstanding_bursts_q < MAX_OUTSTANDING_BURSTS) &&
                         (expected_fifo_lvl <= DATA_REQUEST_LEVEL);
 
@@ -229,24 +248,26 @@ assign beat_accept = axi_sys.Rtransfer;
 
 always_ff @(posedge axi_sys.clk) begin
   if (!axi_sys.rstn) begin
-    start_addr_q     <= '0;
-    stop_addr_q      <= '0;
-    issue_addr_q     <= '0;
-    req_next_addr_q  <= '0;
-    req_beats_q      <= '0;
-    axi_sys.raddr    <= '0;
-    axi_sys.rlen     <= '0;
-    axi_sys.rvalid   <= 1'b0;
+    start_addr_q       <= '0;
+    stop_addr_q        <= '0;
+    issue_addr_q       <= '0;
+    req_next_addr_q    <= '0;
+    issue_addr_next_q  <= '0;
+    req_beats_q        <= '0;
+    axi_sys.raddr      <= '0;
+    axi_sys.rlen       <= '0;
+    axi_sys.rvalid     <= 1'b0;
   end else begin
     if (wr_state_q == WR_INIT) begin
-      start_addr_q    <= req_start_addr;
-      stop_addr_q     <= req_stop_addr;
-      issue_addr_q    <= req_start_addr;
-      req_next_addr_q <= req_start_addr;
-      req_beats_q     <= '0;
-      axi_sys.raddr   <= req_start_addr;
-      axi_sys.rlen    <= '0;
-      axi_sys.rvalid  <= 1'b0;
+      start_addr_q      <= req_start_addr;
+      stop_addr_q       <= req_stop_addr;
+      issue_addr_q      <= req_start_addr;
+      req_next_addr_q   <= req_start_addr;
+      issue_addr_next_q <= req_start_addr;
+      req_beats_q       <= '0;
+      axi_sys.raddr     <= req_start_addr;
+      axi_sys.rlen      <= '0;
+      axi_sys.rvalid    <= 1'b0;
     end else if (wr_state_d == WR_FLUSH) begin
       axi_sys.rvalid <= 1'b0;
     end else begin
@@ -254,11 +275,12 @@ always_ff @(posedge axi_sys.clk) begin
         axi_sys.rvalid <= 1'b0;
         issue_addr_q   <= req_next_addr_q;
       end else if (prefetch_issue) begin
-        axi_sys.raddr   <= issue_addr_q;
-        axi_sys.rlen    <= issue_len_c;
-        axi_sys.rvalid  <= 1'b1;
-        req_beats_q     <= issue_beats_c;
-        req_next_addr_q <= issue_addr_next_c;
+        axi_sys.raddr      <= issue_addr_q;
+        axi_sys.rlen       <= issue_len_l1_q;
+        axi_sys.rvalid     <= 1'b1;
+        req_beats_q        <= issue_beats_l1_q;
+        req_next_addr_q    <= issue_addr_next_l1_q;
+        issue_addr_next_q  <= issue_addr_next_c;
       end
     end
   end
