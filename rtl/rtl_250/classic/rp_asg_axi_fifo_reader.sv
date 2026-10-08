@@ -317,10 +317,10 @@ always_ff @(posedge dac_clk_i) begin
     last_pre_pulse <= 1'b0;
   end else begin
     last_pre_pulse <= 1'b0;
-    if ((consume_word && (words_left_q == {{(AW-2){1'b0}},2'd2})) ||
+    if ((consume_word && (words_left_q == { {(AW-2){1'b0}}, 2'd2 })) ||
         (output_valid && dec_step &&
-         (period_words == {{(AW-1){1'b0}},1'b1}) &&
-         (words_left_q == {{(AW-1){1'b0}},1'b1}) &&
+         (period_words == { {(AW-1){1'b0}}, 1'b1 }) &&
+         (words_left_q == { {(AW-1){1'b0}}, 1'b1 }) &&
          (sample_index == PRE_LAST_SINGLE)))
       last_pre_pulse <= 1'b1;
   end
@@ -338,7 +338,7 @@ assign fifo_active = rd_state_q != RD_IDLE;
 assign fifo_ready  = rd_state_q == RD_ACTIVE;
 assign output_valid = fifo_ready && !buf_empty;
 assign consume_word = output_valid && dec_step && (sample_index == (NUM_SAMPS-1));
-assign cycle_done  = consume_word && (words_left_q == {{(AW-1){1'b0}},1'b1});
+assign cycle_done  = consume_word && (words_left_q == { {(AW-1){1'b0}}, 1'b1 });
 assign stop_cycle  = cycle_done && (cycle_cnt_q == 16'h1) && !(trig_req || repeat_req);
 assign burst_first_sample = burst_first_pending_q && output_valid;
 assign axi_first_o = burst_first_sample;
