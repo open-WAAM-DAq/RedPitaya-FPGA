@@ -506,7 +506,6 @@ always_comb begin
       next_pointer_o = {high_sum,low_sum[31:0]};
    else
       next_pointer_o = {1'b0,pointer_i};
-
    if (advance_i)
       below_limit_o = (step_ext < wrap_limit) &&
                       ({1'b0,pointer_i} < wrap_limit_minus_step);

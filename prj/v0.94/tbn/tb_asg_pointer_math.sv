@@ -62,6 +62,9 @@ task automatic check_math(
 endtask
 
 initial begin
+  int unsigned seed;
+
+  seed = 32'h1a2b_3c4d;
   check_math({30'd1,32'hffff_fff0}, {30'd0,32'h0000_0030}, 30'd2, 1'b1);
   check_math({30'd2,32'hffff_ffff}, {30'd0,32'h0000_0002}, 30'd3, 1'b1);
   check_math({30'd1,32'h0000_0020}, {30'd0,32'h0000_0010}, 30'd2, 1'b1);
@@ -71,7 +74,13 @@ initial begin
   check_math({30'd0,32'h0000_0000}, {30'd1,32'd1}, 30'd1, 1'b1);
   check_math({30'd0,32'h0000_0000}, {30'd1,32'd2}, 30'd1, 1'b1);
 
-  $display("PASS: segmented pointer addition and wrap boundaries");
+  for (int i = 0; i < 256; i++) begin
+    check_math({2'b00,$urandom(seed),$urandom(seed)},
+               {2'b00,$urandom(seed),$urandom(seed)},
+               $urandom(seed), i[0]);
+  end
+
+  $display("PASS: segmented pointer addition and wrap boundaries, including randomized vectors");
   $finish;
 end
 

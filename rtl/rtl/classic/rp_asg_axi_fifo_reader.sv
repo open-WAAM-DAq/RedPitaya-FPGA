@@ -371,8 +371,6 @@ end
 always_ff @(posedge dac_clk_i) begin
   if (!dac_rstn_i || set_rst_i) begin
     dec_cnt_q <= 32'h1;
-  end else if (cycle_reload) begin
-    dec_cnt_q <= 32'h1;
   end else begin
     if (output_valid) begin
       if (dec_cnt_q < dec_safe)
