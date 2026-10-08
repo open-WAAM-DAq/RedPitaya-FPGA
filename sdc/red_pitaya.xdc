@@ -221,7 +221,8 @@ create_clock -period 4.000 -name rx_clk  [get_ports daisy_p_i[1]]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_adc_clk -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT0]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_1x -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT1]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_2x -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT2]
-create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_2p -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT3]
+# CLKOUT3 has an intentional -45 degree phase in red_pitaya_pll.sv. Leave
+# its clock auto-derived so Vivado models the PLLE2_ADV phase and waveform.
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_pwm_clk -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT5]
 
 # Keep dac_clk_o as an external interface clock. Modeling the ODDR output as a
