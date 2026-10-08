@@ -363,7 +363,18 @@ wire dac_trig_axi  = (!dac_rep && trig_in) || (rep_arm && (rep_idle || rep_end_p
 
 assign dac_trig = (!dac_rep && trig_in) || (rep_arm && (rep_idle || rep_end)) ;
 
-assign dac_npnt_sub_neg = dac_npnt < ({1'b0,set_size_i,32'h0} + 1'b1);
+rp_asg_pointer_math #(
+   .PNT_SIZE (PNT_SIZE),
+   .SIZE_W   (RSZ+16)
+) i_pointer_math (
+   .pointer_i        (dac_pnt),
+   .step_i           ({set_step[RSZ+15:0],set_step_lo}),
+   .size_i           (set_size_i),
+   .advance_i        (dac_do),
+   .next_pointer_o   (dac_npnt),
+   .wrapped_pointer_o(dac_npnt_sub),
+   .below_limit_o    (dac_npnt_sub_neg)
+);
 
 // read pointer logic
 always @(posedge dac_clk_i)
@@ -378,7 +389,6 @@ end else begin
    end
 end
 
-assign dac_npnt = dac_do ? dac_pnt + {set_step[RSZ+15:0],set_step_lo} : dac_pnt;
 assign trig_done_o = !dac_rep && trig_in;
 // output frequency on trigger
 assign get_step_o = set_step;
@@ -455,5 +465,55 @@ rp_asg_axi #(
   .axi_last_pre_o  ( axi_last_pre      ),
   .axi_first_o     ( axi_first         )
 );
+
+endmodule
+
+module rp_asg_pointer_math #(
+   parameter int PNT_SIZE = 62,
+   parameter int SIZE_W = PNT_SIZE-32
+)(
+   input  logic [PNT_SIZE-1:0] pointer_i,
+   input  logic [PNT_SIZE-1:0] step_i,
+   input  logic [SIZE_W-1:0]   size_i,
+   input  logic                advance_i,
+   output logic [PNT_SIZE:0]   next_pointer_o,
+   output logic [PNT_SIZE:0]   wrapped_pointer_o,
+   output logic                below_limit_o
+);
+
+localparam int HI_W = PNT_SIZE-32;
+
+logic [32:0] low_sum;
+logic [HI_W:0] high_sum_c0;
+logic [HI_W:0] high_sum_c1;
+logic [HI_W:0] high_sum;
+logic [PNT_SIZE:0] wrap_limit;
+logic [PNT_SIZE:0] step_ext;
+logic [PNT_SIZE:0] wrap_limit_minus_step;
+
+always_comb begin
+   low_sum = {1'b0,pointer_i[31:0]} + {1'b0,step_i[31:0]};
+   high_sum_c0 = {1'b0,pointer_i[PNT_SIZE-1:32]} +
+                 {1'b0,step_i[PNT_SIZE-1:32]};
+   high_sum_c1 = {1'b0,pointer_i[PNT_SIZE-1:32]} +
+                 {1'b0,step_i[PNT_SIZE-1:32]} + {{HI_W{1'b0}},1'b1};
+   high_sum = low_sum[32] ? high_sum_c1 : high_sum_c0;
+   wrap_limit = {1'b0,size_i,32'b0} + {{PNT_SIZE{1'b0}},1'b1};
+   step_ext = {1'b0,step_i};
+   wrap_limit_minus_step = wrap_limit - step_ext;
+
+   if (advance_i)
+      next_pointer_o = {high_sum,low_sum[31:0]};
+   else
+      next_pointer_o = {1'b0,pointer_i};
+
+   if (advance_i)
+      below_limit_o = (step_ext < wrap_limit) &&
+                      ({1'b0,pointer_i} < wrap_limit_minus_step);
+   else
+      below_limit_o = {1'b0,pointer_i} < wrap_limit;
+
+   wrapped_pointer_o = next_pointer_o - wrap_limit;
+end
 
 endmodule
