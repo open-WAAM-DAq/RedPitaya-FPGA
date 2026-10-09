@@ -211,7 +211,7 @@ create_clock -period 4.000 -name rx_clk  [get_ports daisy_p_i[1]]
 #   CLKOUT0_DIVIDE = 8 -> pll_adc_clk: 1000/8 = 125 MHz
 #   CLKOUT1_DIVIDE = 8 -> pll_dac_clk_1x: 1000/8 = 125 MHz
 #   CLKOUT2_DIVIDE = 4 -> pll_dac_clk_2x: 1000/4 = 250 MHz
-#   CLKOUT3_DIVIDE = 4 -> pll_dac_clk_2p: 1000/4 = 250 MHz
+#   CLKOUT3_DIVIDE and phase are project-configurable for the DAC output.
 #   CLKOUT4_DIVIDE = 4 -> pll_ser_clk: 1000/4 = 250 MHz
 #   CLKOUT5_DIVIDE = 4 -> pll_pwm_clk: 1000/4 = 250 MHz
 
@@ -221,13 +221,14 @@ create_clock -period 4.000 -name rx_clk  [get_ports daisy_p_i[1]]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_adc_clk -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT0]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_1x -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT1]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_2x -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT2]
-# CLKOUT3 has an intentional -45 degree phase in red_pitaya_pll.sv. Leave
-# its clock auto-derived so Vivado models the PLLE2_ADV phase and waveform.
+# CLKOUT3 divide and phase are project-configurable. Leave its clock
+# auto-derived so Vivado models the PLLE2_ADV frequency, phase, and waveform.
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_pwm_clk -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT5]
 
-# Keep dac_clk_o as an external interface clock. Modeling the ODDR output as a
-# generated clock created an inter-clock setup path back into pll_dac_clk_1x.
-create_clock -period 8.000 -name dac_clk_o [get_ports dac_clk_o]
+# The DAC clock is forwarded by oddr_dac_clk from pll_dac_clk_2p. With
+# D1=0/D2=1 and OPPOSITE_EDGE, its rising/falling edges map to source edges
+# 2/3. Preserve the PLL phase in the pin clock model.
+create_generated_clock -name dac_clk_o -source [get_pins pll/pll/CLKOUT3] -edges {2 3 4} [get_ports dac_clk_o]
 
 # False path constraints
 set_false_path -from [get_clocks adc_clk] -to [get_clocks dac_clk_o]

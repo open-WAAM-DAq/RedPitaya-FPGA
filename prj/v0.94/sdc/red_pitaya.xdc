@@ -23,7 +23,8 @@
 #   CLKOUT0_DIVIDE = 8 -> pll_adc_clk: 1000/8 = 125 MHz
 #   CLKOUT1_DIVIDE = 8 -> pll_dac_clk_1x: 1000/8 = 125 MHz
 #   CLKOUT2_DIVIDE = 4 -> pll_dac_clk_2x: 1000/4 = 250 MHz
-#   CLKOUT3_DIVIDE = 4 -> pll_dac_clk_2p: 1000/4 = 250 MHz
+#   CLKOUT3_DIVIDE = 8 -> pll_dac_clk_2p: 1000/8 = 125 MHz for v0.94
+#   CLKOUT3_PHASE = 129.375 degrees -> 2.875 ns at 125 MHz
 #   CLKOUT4_DIVIDE = 4 -> pll_ser_clk: 1000/4 = 250 MHz
 #   CLKOUT5_DIVIDE = 4 -> pll_pwm_clk: 1000/4 = 250 MHz
 #
@@ -32,9 +33,9 @@
 # So: divide_by = CLKOUTx_DIVIDE, multiply_by = CLKFBOUT_MULT
 # PLL generated clocks are defined by the shared board XDC (sdc/red_pitaya.xdc).
 
-# Clock for output DAC clock port (125 MHz)
-# Waveform: 0.000ns rise, 4.000ns fall (50% duty cycle)
-# dac_clk_o is defined by the shared board XDC (sdc/red_pitaya.xdc).
+# dac_clk_o is generated from the phase-shifted 125 MHz PLL output and defined
+# by the shared board XDC. DAC data and WRT are DDR-launched from the 125 MHz
+# data clock and timed against this forwarded output clock.
 
 # False path constraints for cross-domain paths
 # These paths are between independent clock domains and should not be timing-checked
@@ -46,8 +47,8 @@ set_clock_groups -asynchronous -group [get_clocks par_clk] -group [get_clocks pl
 set_false_path -from [get_clocks pll_adc_clk] -to [get_clocks clk_fpga_0]
 set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks pll_adc_clk]
 
-# False path constraints between PLL output clocks with different periods
-# Paths between 125 MHz and 250 MHz PLL outputs are likely CDC and should not be checked
+# False path constraints between internal PLL output-clock domains.
+# Keep the DAC data/WRT launch-to-forwarded-clock paths timed below.
 set_false_path -from [get_clocks pll_adc_clk] -to [get_clocks pll_dac_clk_2x]
 set_false_path -from [get_clocks pll_dac_clk_2x] -to [get_clocks pll_adc_clk]
 set_false_path -from [get_clocks pll_adc_clk] -to [get_clocks pll_dac_clk_2p]
@@ -57,12 +58,12 @@ set_false_path -from [get_clocks pll_pwm_clk] -to [get_clocks pll_adc_clk]
 
 set_false_path -from [get_clocks pll_dac_clk_1x] -to [get_clocks pll_dac_clk_2x]
 set_false_path -from [get_clocks pll_dac_clk_2x] -to [get_clocks pll_dac_clk_1x]
-set_false_path -from [get_clocks pll_dac_clk_1x] -to [get_clocks pll_dac_clk_2p]
+# Do not false-path 1x/2x launch clocks to pll_dac_clk_2p: those paths drive the
+# DAC data/WRT pins and are checked against the forwarded dac_clk_o clock.
 set_false_path -from [get_clocks pll_dac_clk_2p] -to [get_clocks pll_dac_clk_1x]
 set_false_path -from [get_clocks pll_dac_clk_1x] -to [get_clocks pll_pwm_clk]
 set_false_path -from [get_clocks pll_pwm_clk] -to [get_clocks pll_dac_clk_1x]
 
-set_false_path -from [get_clocks pll_dac_clk_2x] -to [get_clocks pll_dac_clk_2p]
 set_false_path -from [get_clocks pll_dac_clk_2p] -to [get_clocks pll_dac_clk_2x]
 set_false_path -from [get_clocks pll_dac_clk_2x] -to [get_clocks pll_pwm_clk]
 set_false_path -from [get_clocks pll_pwm_clk] -to [get_clocks pll_dac_clk_2x]
@@ -161,14 +162,26 @@ set_input_delay -clock rx_clk -max 2.0 [get_ports daisy_n_i[*]]
 set_input_delay -clock rx_clk -min 0.0 [get_ports daisy_n_i[*]]
 
 # === Output Delays ===
-# DAC data outputs
-set_output_delay -clock pll_dac_clk_1x -max 2.0 [get_ports dac_dat_o[*]]
-set_output_delay -clock pll_dac_clk_1x -min 0.0 [get_ports dac_dat_o[*]]
+# DAC1401D125 data: 1.8 ns setup and 1.0 ns hold. The max delay includes a
+# 1.0 ns board/skew margin; the min delay models the datasheet hold requirement.
+set_output_delay -clock dac_clk_o -max 2.8 [get_ports dac_dat_o[*]]
+set_output_delay -clock dac_clk_o -min -1.0 [get_ports dac_dat_o[*]]
+set_output_delay -clock dac_clk_o -clock_fall -max 2.8 [get_ports dac_dat_o[*]]
+set_output_delay -clock dac_clk_o -clock_fall -min -1.0 [get_ports dac_dat_o[*]]
 
-# DAC control outputs
-set_output_delay -clock pll_dac_clk_1x -max 2.0 [get_ports dac_wrt_o]
+# WRT has the same setup/hold window relative to the forwarded DAC clock.
+set_output_delay -clock dac_clk_o -max 2.8 [get_ports dac_wrt_o]
+set_output_delay -clock dac_clk_o -min -1.0 [get_ports dac_wrt_o]
+set_output_delay -clock dac_clk_o -clock_fall -max 2.8 [get_ports dac_wrt_o]
+set_output_delay -clock dac_clk_o -clock_fall -min -1.0 [get_ports dac_wrt_o]
+
+# Match insertion delay on the related PLL DAC launch and forwarded-clock
+# networks, each driven by a separate BUFG.
+set_property CLOCK_DELAY_GROUP dac_io_clocks [get_nets -of_objects [get_pins {bufg_dac_clk_1x/O}]]
+set_property CLOCK_DELAY_GROUP dac_io_clocks [get_nets -of_objects [get_pins {pll/pll_dac_clk_2p_BUFG_inst/O}]]
+
+# DAC control outputs without supplied setup/hold requirements.
 set_output_delay -clock pll_dac_clk_1x -max 2.0 [get_ports dac_sel_o]
-set_output_delay -clock pll_dac_clk_1x -max 2.0 [get_ports dac_clk_o]
 set_output_delay -clock pll_dac_clk_1x -max 2.0 [get_ports dac_rst_o]
 
 # Daisy chain outputs
@@ -218,4 +231,3 @@ set_output_delay -clock adc_clk -max 5.0 [get_ports exp_n_io[*]]
 set_output_delay -clock adc_clk -min 0.0 [get_ports exp_n_io[*]]
 
 # Optional expansion/control ports are not present in this top-level variant.
-
