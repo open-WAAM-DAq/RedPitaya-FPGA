@@ -41,9 +41,10 @@
 # These paths are between independent clock domains and should not be timing-checked
 set_false_path -from [get_clocks adc_clk] -to [get_clocks pll_adc_clk]
 set_false_path -from [get_clocks pll_adc_clk] -to [get_clocks adc_clk]
-set_false_path -from [get_clocks adc_clk] -to [get_clocks par_clk]
-set_false_path -from [get_clocks par_clk] -to [get_clocks adc_clk]
-set_clock_groups -asynchronous -group [get_clocks par_clk] -group [get_clocks pll_adc_clk]
+# Commented out: par_clk is a regional clock from BUFR, not found by get_clocks
+# set_false_path -from [get_clocks adc_clk] -to [get_clocks par_clk]
+# set_false_path -from [get_clocks par_clk] -to [get_clocks adc_clk]
+# set_clock_groups -asynchronous -group [get_clocks par_clk] -group [get_clocks pll_adc_clk]
 set_false_path -from [get_clocks pll_adc_clk] -to [get_clocks clk_fpga_0]
 set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks pll_adc_clk]
 
@@ -164,32 +165,38 @@ set_input_delay -clock rx_clk -min 0.0 [get_ports daisy_n_i[*]]
 # === Output Delays ===
 # DAC1401D125 data: 1.8 ns setup and 1.0 ns hold. The max delay includes a
 # 1.0 ns board/skew margin; the min delay models the datasheet hold requirement.
-set_output_delay -clock dac_clk_o -max 2.8 [get_ports dac_dat_o[*]]
-set_output_delay -clock dac_clk_o -min -1.0 [get_ports dac_dat_o[*]]
-set_output_delay -clock dac_clk_o -clock_fall -max 2.8 [get_ports dac_dat_o[*]]
-set_output_delay -clock dac_clk_o -clock_fall -min -1.0 [get_ports dac_dat_o[*]]
+# WRT has the same setup/hold window relative to the launch clock (pll_dac_clk_1x).
+# DAC data and WRT are launched from pll_dac_clk_1x (125 MHz) and timed against the
+# forwarded dac_clk_o. Use launch clock for constraints.
+set_output_delay -clock pll_dac_clk_1x -max 2.8 [get_ports dac_dat_o[*]]
+set_output_delay -clock pll_dac_clk_1x -min -1.0 [get_ports dac_dat_o[*]]
+set_output_delay -clock pll_dac_clk_1x -clock_fall -max 2.8 [get_ports dac_dat_o[*]]
+set_output_delay -clock pll_dac_clk_1x -clock_fall -min -1.0 [get_ports dac_dat_o[*]]
 
-# WRT has the same setup/hold window relative to the forwarded DAC clock.
-set_output_delay -clock dac_clk_o -max 2.8 [get_ports dac_wrt_o]
-set_output_delay -clock dac_clk_o -min -1.0 [get_ports dac_wrt_o]
-set_output_delay -clock dac_clk_o -clock_fall -max 2.8 [get_ports dac_wrt_o]
-set_output_delay -clock dac_clk_o -clock_fall -min -1.0 [get_ports dac_wrt_o]
+set_output_delay -clock pll_dac_clk_1x -max 2.8 [get_ports dac_wrt_o]
+set_output_delay -clock pll_dac_clk_1x -min -1.0 [get_ports dac_wrt_o]
+set_output_delay -clock pll_dac_clk_1x -clock_fall -max 2.8 [get_ports dac_wrt_o]
+set_output_delay -clock pll_dac_clk_1x -clock_fall -min -1.0 [get_ports dac_wrt_o]
+
+# DAC control outputs (select, reset) - use pll_dac_clk_1x as launch clock
+set_output_delay -clock pll_dac_clk_1x -max 2.8 [get_ports dac_sel_o]
+set_output_delay -clock pll_dac_clk_1x -min -1.0 [get_ports dac_sel_o]
+set_output_delay -clock pll_dac_clk_1x -max 2.8 [get_ports dac_rst_o]
+set_output_delay -clock pll_dac_clk_1x -min -1.0 [get_ports dac_rst_o]
 
 # Match insertion delay on the related PLL DAC launch and forwarded-clock
 # networks, each driven by a separate BUFG.
 set_property CLOCK_DELAY_GROUP dac_io_clocks [get_nets -of_objects [get_pins {bufg_dac_clk_1x/O}]]
-set_property CLOCK_DELAY_GROUP dac_io_clocks [get_nets -of_objects [get_pins {pll/pll_dac_clk_2p_BUFG_inst/O}]]
-
-# DAC control outputs without supplied setup/hold requirements.
-set_output_delay -clock pll_dac_clk_1x -max 2.0 [get_ports dac_sel_o]
-set_output_delay -clock pll_dac_clk_1x -max 2.0 [get_ports dac_rst_o]
+set_property CLOCK_DELAY_GROUP dac_io_clocks [get_nets -of_objects [get_pins {pll/pll/CLKOUT3}]]
 
 # Daisy chain outputs
-# Serial output timing is driven by fclk[1] (250 MHz), exposed as clk_fpga_1.
-set_output_delay -clock clk_fpga_1 -max 2.0 [get_ports daisy_p_o[*]]
-set_output_delay -clock clk_fpga_1 -min 0.0 [get_ports daisy_p_o[*]]
-set_output_delay -clock clk_fpga_1 -max 2.0 [get_ports daisy_n_o[*]]
-set_output_delay -clock clk_fpga_1 -min 0.0 [get_ports daisy_n_o[*]]
+# Serial output timing - use pll_dac_clk_1x (125 MHz) for consistent timing
+# Note: Daisy outputs are driven by OSERDES from clk_fpga_1 (250 MHz in PS),
+# but we constrain to 125 MHz to match board maximum frequency.
+set_output_delay -clock pll_dac_clk_1x -max 2.0 [get_ports daisy_p_o[*]]
+set_output_delay -clock pll_dac_clk_1x -min 0.0 [get_ports daisy_p_o[*]]
+set_output_delay -clock pll_dac_clk_1x -max 2.0 [get_ports daisy_n_o[*]]
+set_output_delay -clock pll_dac_clk_1x -min 0.0 [get_ports daisy_n_o[*]]}
 
 # LED outputs
 set_output_delay -clock clk_fpga_0 -max 2.0 [get_ports led_o[*]]

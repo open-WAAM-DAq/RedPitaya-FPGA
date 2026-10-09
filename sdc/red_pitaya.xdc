@@ -200,8 +200,8 @@ create_clock -period 8.000 -name adc_clk [get_ports adc_clk_i[1]]
 
 set_input_delay -clock adc_clk 3.400 [get_ports adc_dat_i[*][*]]
 
-# RX clock from daisy chain (250 MHz)
-create_clock -period 4.000 -name rx_clk  [get_ports daisy_p_i[1]]
+# RX clock from daisy chain (125 MHz)
+create_clock -period 8.000 -name rx_clk  [get_ports daisy_p_i[1]]
 
 # Generated clocks from PLL
 # PLL takes adc_clk_in (125MHz) and generates multiple outputs
@@ -223,11 +223,13 @@ create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_1x -d
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_2x -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT2]
 # CLKOUT3 divide and phase are project-configurable. Leave its clock
 # auto-derived so Vivado models the PLLE2_ADV frequency, phase, and waveform.
-create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_pwm_clk -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT5]
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_ser_clk -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT4]
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_pwm_clk -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT5]
 
 # The DAC clock is forwarded by oddr_dac_clk from pll_dac_clk_2p. With
 # D1=0/D2=1 and OPPOSITE_EDGE, its rising/falling edges map to source edges
 # 2/3. Preserve the PLL phase in the pin clock model.
+create_generated_clock -name pll_dac_clk_2p -source [get_pins pll/pll/CLKIN1] -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT3]
 create_generated_clock -name dac_clk_o -source [get_pins pll/pll/CLKOUT3] -edges {2 3 4} [get_ports dac_clk_o]
 
 # False path constraints

@@ -167,8 +167,7 @@ logic                 pll_adc_clk;
 logic                 pll_dac_clk_1x;
 logic                 pll_dac_clk_2x;
 logic                 pll_dac_clk_2p;
-// Removed pll_ser_clk - using fclk[1] from PS instead
-//logic                 pll_ser_clk;
+logic                 pll_ser_clk;
 logic                 pll_pwm_clk;
 logic                 pll_locked;
 logic                 pll_locked_r;
@@ -255,9 +254,8 @@ red_pitaya_pll #(
   .clk_dac_1x  (pll_dac_clk_1x),  // DAC clock 125MHz
   .clk_dac_2x  (pll_dac_clk_2x),  // DAC clock 250MHz
   .clk_dac_2p  (pll_dac_clk_2p),  // DAC pin clock 125MHz, phase shifted for source-synchronous timing
-  // Removed clk_ser connection - using fclk[1] from PS instead
-  //.clk_ser     (pll_ser_clk   ),  // fast serial clock
-  .clk_pdm     (pll_pwm_clk   ),  // PWM clock
+  .clk_ser     (pll_ser_clk   ),  // fast serial clock 125MHz
+  .clk_pdm     (pll_pwm_clk   ),  // PWM clock 125MHz
   // status outputs
   .pll_locked  (pll_locked    )
 );
@@ -269,10 +267,9 @@ BUFG bufg_dac_clk_2x  (.O (dac_clk_2x ), .I (pll_dac_clk_2x));
 
 // Removed bufg_dac_clk_2p - use pll_dac_clk_2p directly to save BUFG
 assign dac_clk_2p = pll_dac_clk_2p;
-// Removed bufg_ser_clk - use fclk[1] (250 MHz) from PS instead to save BUFG
-assign ser_clk = fclk[1];
-// Removed bufg_pwm_clk - use pll_pwm_clk directly to save BUFG resources
-assign pwm_clk = pll_pwm_clk;
+
+BUFG bufg_ser_clk   (.O (ser_clk     ), .I (pll_ser_clk   ));
+BUFG bufg_pwm_clk   (.O (pwm_clk     ), .I (pll_pwm_clk   ));
 
 always @(posedge fclk[0]) begin
   fpll_locked_r   <= pll_locked;
