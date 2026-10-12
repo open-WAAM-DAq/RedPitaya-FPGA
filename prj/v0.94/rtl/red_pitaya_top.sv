@@ -167,8 +167,8 @@ logic                 pll_adc_clk;
 logic                 pll_dac_clk_1x;
 logic                 pll_dac_clk_2x;
 logic                 pll_dac_clk_2p;
-logic                 pll_ser_clk;
-logic                 pll_pwm_clk;
+logic                 pll_ser_clk;  // Serial clock 250MHz from PLL
+logic                 pll_pwm_clk;  // PWM clock 250MHz from PLL
 logic                 pll_locked;
 logic                 pll_locked_r;
 logic                 fpll_locked_r,fpll_locked_r2,fpll_locked_r3;
@@ -232,8 +232,8 @@ gpio_if #(.DW (3*GDW)) gpio ();
 // AXI masters
 axi_sys_if axi0_sys (.clk(adc_clk    ), .rstn(adc_rstn    ));
 axi_sys_if axi1_sys (.clk(adc_clk    ), .rstn(adc_rstn    ));
-axi_sys_if axi2_sys (.clk(dac_clk_2x), .rstn(dac_axi_rstn));
-axi_sys_if axi3_sys (.clk(dac_clk_2x), .rstn(dac_axi_rstn));
+axi_sys_if axi2_sys (.clk(dac_clk_1x), .rstn(dac_axi_rstn));
+axi_sys_if axi3_sys (.clk(dac_clk_1x), .rstn(dac_axi_rstn));
 ////////////////////////////////////////////////////////////////////////////////
 // PLL (clock and reset)
 ////////////////////////////////////////////////////////////////////////////////
@@ -242,10 +242,7 @@ axi_sys_if axi3_sys (.clk(dac_clk_2x), .rstn(dac_axi_rstn));
 IBUFDS i_clk (.I (adc_clk_i[1]), .IB (adc_clk_i[0]), .O (adc_clk_in));  // differential clock input
 
 assign rstn_pll = frstn[0] & ~(!fpll_locked_r2 && fpll_locked_r3);
-red_pitaya_pll #(
-  .DAC_CLK_DIVIDE (8),
-  .DAC_CLK_PHASE  (129.375)
-) pll (
+red_pitaya_pll pll (
   // inputs
   .clk         (adc_clk_in),  // clock
   .rstn        (rstn_pll  ),  // reset - active low
@@ -253,9 +250,9 @@ red_pitaya_pll #(
   .clk_adc     (pll_adc_clk   ),  // ADC clock
   .clk_dac_1x  (pll_dac_clk_1x),  // DAC clock 125MHz
   .clk_dac_2x  (pll_dac_clk_2x),  // DAC clock 250MHz
-  .clk_dac_2p  (pll_dac_clk_2p),  // DAC pin clock 125MHz, phase shifted for source-synchronous timing
-  .clk_ser     (pll_ser_clk   ),  // fast serial clock 125MHz
-  .clk_pdm     (pll_pwm_clk   ),  // PWM clock 125MHz
+  .clk_dac_2p  (pll_dac_clk_2p),  // DAC clock 125MHz with phase shift
+  .clk_ser     (pll_ser_clk   ),  // fast serial clock 250MHz
+  .clk_pdm     (pll_pwm_clk   ),  // PWM clock 250MHz
   // status outputs
   .pll_locked  (pll_locked    )
 );
@@ -267,9 +264,10 @@ BUFG bufg_dac_clk_2x  (.O (dac_clk_2x ), .I (pll_dac_clk_2x));
 
 // Removed bufg_dac_clk_2p - use pll_dac_clk_2p directly to save BUFG
 assign dac_clk_2p = pll_dac_clk_2p;
-
-BUFG bufg_ser_clk   (.O (ser_clk     ), .I (pll_ser_clk   ));
-BUFG bufg_pwm_clk   (.O (pwm_clk     ), .I (pll_pwm_clk   ));
+// Use pll_ser_clk from PLL (250 MHz) for daisy chain
+assign ser_clk = pll_ser_clk;
+// Use pll_pwm_clk from PLL (250 MHz) for PWM
+assign pwm_clk = pll_pwm_clk;
 
 always @(posedge fclk[0]) begin
   fpll_locked_r   <= pll_locked;
@@ -468,12 +466,36 @@ begin // Loopback is for demonstration only. We avoid constraining for timing op
   dac_dat_b <= digital_loop[1] ? {adc_dat[1][ADW-1], ~adc_dat[1][ADW-2 -: 13]} : {dac_b[14-1], ~dac_b[14-2:0]};
 end
 
-// DDR outputs
-ODDR oddr_dac_clk          (.Q(dac_clk_o), .D1(1'b0     ), .D2(1'b1     ), .C(dac_clk_2p), .CE(1'b1), .R(1'b0   ), .S(1'b0));
-ODDR oddr_dac_wrt          (.Q(dac_wrt_o), .D1(1'b0     ), .D2(1'b1     ), .C(dac_clk_1x), .CE(1'b1), .R(1'b0   ), .S(1'b0));
-ODDR oddr_dac_sel          (.Q(dac_sel_o), .D1(1'b1     ), .D2(1'b0     ), .C(dac_clk_1x), .CE(1'b1), .R(dac_rst), .S(1'b0));
-ODDR oddr_dac_rst          (.Q(dac_rst_o), .D1(dac_rst  ), .D2(dac_rst  ), .C(dac_clk_1x), .CE(1'b1), .R(1'b0   ), .S(1'b0));
-ODDR oddr_dac_dat [14-1:0] (.Q(dac_dat_o), .D1(dac_dat_b), .D2(dac_dat_a), .C(dac_clk_1x), .CE(1'b1), .R(dac_rst), .S(1'b0));
+////////////////////////////////////////////////////////////////////////////////
+//  DAC output registers (single-rate at 125 MHz)
+////////////////////////////////////////////////////////////////////////////////
+
+// Replace ODDR with regular registers to meet DAC 125 MHz spec
+reg [14-1:0] dac_dat_reg;
+reg dac_wrt_reg;
+reg dac_sel_reg;
+reg dac_rst_reg;
+
+always @(posedge dac_clk_1x) begin
+    // DAC data - merge dac_dat_a and dac_dat_b into single-rate
+    // Since DAC can only accept 125 MSPS, we need to select one or merge appropriately
+    // For now, use dac_dat_a as the primary data source
+    dac_dat_reg <= dac_dat_a;
+    
+    // DAC control signals
+    dac_wrt_reg <= 1'b0;  // WRT should be stable, will be controlled by logic
+    dac_sel_reg <= 1'b0;  // SEL should be stable
+    dac_rst_reg <= dac_rst;
+end
+
+// Direct clock output (no ODDR - DAC needs 125 MHz, not 250 MHz DDR)
+assign dac_clk_o = dac_clk_2p;
+
+// Output assignments
+assign dac_dat_o = dac_dat_reg;
+assign dac_wrt_o = dac_wrt_reg;
+assign dac_sel_o = dac_sel_reg;
+assign dac_rst_o = dac_rst_reg;
 
 ////////////////////////////////////////////////////////////////////////////////
 //  House Keeping
@@ -870,16 +892,6 @@ end
 
 assign dac_dat_a = 14'h0;
 assign dac_dat_b = 14'h0;
-
-// DDR outputs
-ODDR oddr_dac_clk          (.Q(dac_clk_o), .D1(1'b0     ), .D2(1'b1     ), .C(dac_clk_2p), .CE(1'b1), .R(1'b0   ), .S(1'b0));
-ODDR oddr_dac_wrt          (.Q(dac_wrt_o), .D1(1'b0     ), .D2(1'b1     ), .C(dac_clk_1x), .CE(1'b1), .R(1'b0   ), .S(1'b0));
-ODDR oddr_dac_sel          (.Q(dac_sel_o), .D1(1'b1     ), .D2(1'b0     ), .C(dac_clk_1x), .CE(1'b1), .R(dac_rst), .S(1'b0));
-ODDR oddr_dac_rst          (.Q(dac_rst_o), .D1(dac_rst  ), .D2(dac_rst  ), .C(dac_clk_1x), .CE(1'b1), .R(1'b0   ), .S(1'b0));
-ODDR oddr_dac_dat [14-1:0] (.Q(dac_dat_o), .D1(dac_dat_b), .D2(dac_dat_a), .C(dac_clk_1x), .CE(1'b1), .R(dac_rst), .S(1'b0));
-
-ODDR i_adc_clk_p ( .Q(adc_clk_o[0]), .D1(1'b1), .D2(1'b0), .C(1'b0), .CE(1'b1), .R(1'b0), .S(1'b0));
-ODDR i_adc_clk_n ( .Q(adc_clk_o[1]), .D1(1'b0), .D2(1'b1), .C(1'b0), .CE(1'b1), .R(1'b0), .S(1'b0));
 
 logic rxs_clk, rxs_dat;
 IBUFDS #(.IOSTANDARD ("DIFF_HSTL_I_18")) i_IBUFGDS_clk

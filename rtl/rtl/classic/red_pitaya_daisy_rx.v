@@ -145,10 +145,10 @@ BUFR #(.SIM_DEVICE("7SERIES"), .BUFR_DIVIDE("2")) i_BUFR_clk
   .O   (  par_clk      ),
   .CE  (  1'b1         ),
   .CLR (  1'b0         ),
-  .I   (  ser_clk  )  // Connect to BUFIO output, not input
+  .I   (  ser_clk_dly  )
 );
 
-BUFG i_parclk_buf   (.O(par_clk_o), .I(par_clk));
+BUFG i_parclk_buf (.O(par_clk_o), .I(par_clk));
 
 // Reset on receive clock domain
 always @(posedge par_clk or negedge cfg_en_i) begin
@@ -346,10 +346,6 @@ assign par_dv_o[GV] = sync_mode_i ? 1'b1 : par_dv_or;
 end
 endgenerate
 
-
-// Note: BUFR->BUFG cascade generates CKBF-1 warning but is necessary for routing
-// Alternative topologies (BUFG with divide, separate buffers) failed during routing
-// This topology ensures proper clock distribution to ISERDES2 and top-level
 
 assign cfg_trained_o = &par_ok   ;
 

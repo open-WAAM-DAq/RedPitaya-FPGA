@@ -10,10 +10,7 @@
  * for more details on the language used herein.
  */
 
-module red_pitaya_pll #(
-  parameter integer DAC_CLK_DIVIDE = 4,
-  parameter real    DAC_CLK_PHASE  = -45.000
-) (
+module red_pitaya_pll (
   // inputs
   input  logic clk       ,  // clock
   input  logic rstn      ,  // reset - active low
@@ -45,13 +42,13 @@ PLLE2_ADV #(
    .CLKOUT2_DIVIDE       ( 4         ),
    .CLKOUT2_PHASE        ( 0.000     ),
    .CLKOUT2_DUTY_CYCLE   ( 0.5       ),
-   .CLKOUT3_DIVIDE       ( DAC_CLK_DIVIDE ),
-   .CLKOUT3_PHASE        ( DAC_CLK_PHASE  ),
+   .CLKOUT3_DIVIDE       ( 8         ),
+   .CLKOUT3_PHASE        (129.375    ),
    .CLKOUT3_DUTY_CYCLE   ( 0.5       ),
-   .CLKOUT4_DIVIDE       ( 8         ),  // 8->125MHz for P0
+   .CLKOUT4_DIVIDE       ( 4         ),  // 4->250MHz, 2->500MHz
    .CLKOUT4_PHASE        ( 0.000     ),
    .CLKOUT4_DUTY_CYCLE   ( 0.5       ),
-   .CLKOUT5_DIVIDE       ( 8         ),  // 8->125MHz for P0
+   .CLKOUT5_DIVIDE       ( 4         ),
    .CLKOUT5_PHASE        ( 0.000     ),
    .CLKOUT5_DUTY_CYCLE   ( 0.5       ),
    .CLKIN1_PERIOD        ( 8.000     ),

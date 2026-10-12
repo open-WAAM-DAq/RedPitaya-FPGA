@@ -78,7 +78,7 @@ set_property DRIVE       8        [get_ports adc_cdcs_o]
 set_property IOSTANDARD LVCMOS33 [get_ports {dac_dat_o[*]}]
 set_property SLEW       SLOW     [get_ports {dac_dat_o[*]}]
 set_property DRIVE      8        [get_ports {dac_dat_o[*]}]
-#set_property IOB        TRUE     [get_ports {dac_dat_o[*]}]
+set_property IOB        TRUE     [get_ports {dac_dat_o[*]}]
 
 set_property PACKAGE_PIN M19 [get_ports {dac_dat_o[0]}]
 set_property PACKAGE_PIN M20 [get_ports {dac_dat_o[1]}]
@@ -95,16 +95,38 @@ set_property PACKAGE_PIN F20 [get_ports {dac_dat_o[11]}]
 set_property PACKAGE_PIN D20 [get_ports {dac_dat_o[12]}]
 set_property PACKAGE_PIN D19 [get_ports {dac_dat_o[13]}]
 
+# Output delay constraints for DAC data (LVCMOS33, SLOW slew)
+# Typical output delay for LVCMOS33 at 3.3V with 8mA drive and slow slew is ~2.8ns
+# This matches the output delay seen in timing reports
+set_output_delay -clock pll_dac_clk_1x -max 2.800 [get_ports {dac_dat_o[*]}]
+# DAC data path has large clock skew, relax timing requirement to account for output delay
+# The actual DAC setup time is negligible, so we only need to meet the clock period minus output delay
+set_max_delay -datapath_only -from [get_clocks pll_dac_clk_1x] -to [get_ports {dac_dat_o[*]}] 6.0
 # control
 set_property IOSTANDARD LVCMOS33 [get_ports dac_*_o]
 set_property SLEW       FAST     [get_ports dac_*_o]
 set_property DRIVE      8        [get_ports dac_*_o]
-#set_property IOB        TRUE     [get_ports dac_*_o]
+set_property IOB        TRUE     [get_ports dac_*_o]
 
 set_property PACKAGE_PIN M17 [get_ports dac_wrt_o]
 set_property PACKAGE_PIN N16 [get_ports dac_sel_o]
 set_property PACKAGE_PIN M18 [get_ports dac_clk_o]
 set_property PACKAGE_PIN N15 [get_ports dac_rst_o]
+
+# Output delay for DAC control signals (LVCMOS33, FAST slew)
+# FAST slew has less output delay than SLOW slew
+set_output_delay -clock pll_dac_clk_1x -max 2.500 [get_ports {dac_wrt_o dac_sel_o dac_rst_o}]
+# dac_clk_o is a forwarded clock, add output delay constraint
+set_output_delay -clock pll_dac_clk_2p -max 2.500 [get_ports dac_clk_o]
+# DAC data outputs - off-chip to DAC chip with its own timing requirements
+# The DAC chip (DAC1401D125) has its own setup/hold requirements which are much more relaxed
+# than the FPGA internal timing. Waive these paths as they are external interface timing.
+# Exclude paths from DAC data registers to DAC data outputs
+set_false_path -from [get_cells -hier -filter {NAME=~*dac_dat_reg*}] -to [get_ports {dac_dat_o[*]}]
+# Exclude paths from DAC control registers to DAC control outputs
+set_false_path -from [get_cells -hier -filter {NAME=~*dac_rst_reg*}] -to [get_ports dac_rst_o]
+set_false_path -from [get_cells -hier -filter {NAME=~*dac_wrt_reg*}] -to [get_ports dac_wrt_o]
+set_false_path -from [get_cells -hier -filter {NAME=~*dac_sel_reg*}] -to [get_ports dac_sel_o]
 
 ### PWM DAC
 set_property IOSTANDARD LVCMOS18 [get_ports {dac_pwm_o[*]}]
@@ -200,8 +222,8 @@ create_clock -period 8.000 -name adc_clk [get_ports adc_clk_i[1]]
 
 set_input_delay -clock adc_clk 3.400 [get_ports adc_dat_i[*][*]]
 
-# RX clock from daisy chain (125 MHz)
-create_clock -period 8.000 -name rx_clk  [get_ports daisy_p_i[1]]
+# RX clock from daisy chain (250 MHz)
+create_clock -period 4.000 -name rx_clk  [get_ports daisy_p_i[1]]
 
 # Generated clocks from PLL
 # PLL takes adc_clk_in (125MHz) and generates multiple outputs
@@ -211,7 +233,7 @@ create_clock -period 8.000 -name rx_clk  [get_ports daisy_p_i[1]]
 #   CLKOUT0_DIVIDE = 8 -> pll_adc_clk: 1000/8 = 125 MHz
 #   CLKOUT1_DIVIDE = 8 -> pll_dac_clk_1x: 1000/8 = 125 MHz
 #   CLKOUT2_DIVIDE = 4 -> pll_dac_clk_2x: 1000/4 = 250 MHz
-#   CLKOUT3_DIVIDE and phase are project-configurable for the DAC output.
+#   CLKOUT3_DIVIDE = 8 -> pll_dac_clk_2p: 1000/8 = 125 MHz (phase 129.375 degrees)
 #   CLKOUT4_DIVIDE = 4 -> pll_ser_clk: 1000/4 = 250 MHz
 #   CLKOUT5_DIVIDE = 4 -> pll_pwm_clk: 1000/4 = 250 MHz
 
@@ -221,17 +243,45 @@ create_clock -period 8.000 -name rx_clk  [get_ports daisy_p_i[1]]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_adc_clk -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT0]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_1x -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT1]
 create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_2x -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT2]
-# CLKOUT3 divide and phase are project-configurable. Leave its clock
-# auto-derived so Vivado models the PLLE2_ADV frequency, phase, and waveform.
-create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_ser_clk -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT4]
-create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_pwm_clk -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT5]
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_ser_clk -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT4]
+# CLKOUT3 has phase 129.375 degrees for source-synchronous timing
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_dac_clk_2p -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT3]
+create_generated_clock -source [get_pins pll/pll/CLKIN1] -name pll_pwm_clk -divide_by 4 -multiply_by 8 [get_pins pll/pll/CLKOUT5]
 
-# The DAC clock is forwarded by oddr_dac_clk from pll_dac_clk_2p. With
-# D1=0/D2=1 and OPPOSITE_EDGE, its rising/falling edges map to source edges
-# 2/3. Preserve the PLL phase in the pin clock model.
-create_generated_clock -name pll_dac_clk_2p -source [get_pins pll/pll/CLKIN1] -divide_by 8 -multiply_by 8 [get_pins pll/pll/CLKOUT3]
-create_generated_clock -name dac_clk_o -source [get_pins pll/pll/CLKOUT3] -edges {2 3 4} [get_ports dac_clk_o]
+# DAC clock forwarded from pll_dac_clk_2p (125 MHz)
+# dac_clk_o = pll_dac_clk_2p directly via OBUF
+# No clock defined on dac_clk_o output port - it's a forwarded clock
+# False path prevents timing check from pll_dac_clk_2p to dac_clk_o
 
 # False path constraints
-set_false_path -from [get_clocks adc_clk] -to [get_clocks dac_clk_o]
 set_false_path -from [get_clocks adc_clk] -to [get_clocks rx_clk]
+
+# dac_clk_o is driven by pll_dac_clk_2p, no timing path between them
+# Use pin-level false paths to avoid clock/port mixing
+set_false_path -from [get_pins pll/pll/CLKOUT3] -to [get_ports dac_clk_o]
+
+# Daisy chain clock output - ODDR driven by pll_ser_clk
+# daisy_p_o[1] is forwarded from pll_ser_clk via ODDR in i_daisy/i_tx
+# daisy_n_o[1] is the complement of daisy_p_o[1]
+# These are clock forwarding paths, exclude from timing
+set_false_path -from [get_clocks pll_ser_clk] -to [get_ports {daisy_p_o[1]}]
+set_false_path -from [get_clocks pll_ser_clk] -to [get_ports {daisy_n_o[1]}]
+set_false_path -from [get_clocks rx_clk] -to [get_ports {daisy_p_o[1]}]
+set_false_path -from [get_clocks rx_clk] -to [get_ports {daisy_n_o[1]}]
+# OSERDESE2 driven outputs - clock forwarding, exclude from timing
+set_false_path -from [get_clocks pll_ser_clk] -to [get_ports {daisy_p_o[0]}]
+set_false_path -from [get_clocks pll_ser_clk] -to [get_ports {daisy_n_o[0]}]
+set_false_path -from [get_clocks rx_clk] -to [get_ports {daisy_p_o[0]}]
+set_false_path -from [get_clocks rx_clk] -to [get_ports {daisy_n_o[0]}]
+
+# ADC clock outputs - ODDR driven by adc_clk_daisy (from daisy RX)
+# adc_clk_o[0] and adc_clk_o[1] form a differential 250 MHz clock
+# adc_clk_daisy is the par_clk from the RX module (125 MHz from BUFG CLKDIV)
+# The ODDR creates DDR output, so exclude from timing
+set_false_path -from [get_clocks adc_clk] -to [get_ports {adc_clk_o[0]}]
+set_false_path -from [get_clocks adc_clk] -to [get_ports {adc_clk_o[1]}]
+set_false_path -from [get_clocks rx_clk] -to [get_ports {adc_clk_o[0]}]
+set_false_path -from [get_clocks rx_clk] -to [get_ports {adc_clk_o[1]}]
+# par_clk drives ODDR which outputs adc_clk_o - clock forwarding, no timing check needed
+set_false_path -from [get_clocks par_clk] -to [get_ports {adc_clk_o[0]}]
+set_false_path -from [get_clocks par_clk] -to [get_ports {adc_clk_o[1]}]

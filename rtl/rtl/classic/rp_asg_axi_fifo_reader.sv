@@ -117,6 +117,7 @@ logic [31:0]   axi_dec_q;
 logic [AW-1:0] axi_start_use;
 logic [AW-1:0] axi_stop_use;
 logic [31:0]   axi_dec_use;
+logic [31:0]   axi_dec_use_d;
 
 //---------------------------------------------------------------------------------
 //
@@ -260,9 +261,23 @@ end
 //---------------------------------------------------------------------------------
 //
 //  period/cycle counters and last pulse
-
+//
 // NOTE: incoming stop address is (real_stop - 4) due to upstream pipeline,
 // so compensate by +4 to compute inclusive word count
+//
+// Pipeline the period_words computation to break the long combinational path
+// from preload_timer through FSM state to words_left_q update.
+// 
+// The path: preload_timer -> preload_done -> FSM -> start_cycle ->
+// axi_start_use/axi_stop_use -> period_words -> words_left_q
+//
+// We pipeline by registering start_cycle and the AXI selections, then computing
+// period_words from the registered values one cycle later.
+logic start_cycle_d;
+logic [AW-1:0] axi_start_use_d;
+logic [AW-1:0] axi_stop_use_d;
+logic [AW-1:0] period_words_d;
+
 assign axi_start_use = start_cycle ? set_axi_start_i : axi_start_q;
 assign axi_stop_use  = start_cycle ? set_axi_stop_i  : axi_stop_q;
 assign axi_dec_use   = start_cycle ? set_axi_dec_i   : axi_dec_q;
@@ -278,13 +293,27 @@ always_ff @(posedge dac_clk_i) begin
     words_left_q   <= '0;
     period_words_q <= '0;
     cycle_cnt_q    <= '0;
+    start_cycle_d   <= 1'b0;
+    axi_start_use_d <= '0;
+    axi_stop_use_d  <= '0;
+    period_words_d <= '0;
   end else begin
+    // Pipeline stage 1: Register signals in the critical path
+    start_cycle_d   <= start_cycle;
+    axi_start_use_d <= axi_start_use;
+    axi_stop_use_d  <= axi_stop_use;
+    period_words_d <= ((axi_stop_use_d + 4 - axi_start_use_d) >> 3) + 1;
+    
     if (cycle_reload) begin
+      // On cycle reload, use the CURRENT period_words (computed from current inputs)
+      // This is the initial load, must use current values
       words_left_q   <= period_words;
       period_words_q <= period_words;
       cycle_cnt_q    <= set_cyc_cnt_i;
     end else if (advance_cycle) begin
-      words_left_q   <= period_words;
+      // On advance cycle, use the PIPELINED period_words_d (from previous cycle)
+      // This breaks the long combinational path: preload_timer -> ... -> period_words
+      words_left_q   <= period_words_d;
       period_words_q <= period_words;
       if (cycle_cnt_q > 16'h1)
         cycle_cnt_q <= cycle_cnt_q - 16'h1;
@@ -300,10 +329,14 @@ always_ff @(posedge dac_clk_i) begin
     axi_start_q <= '0;
     axi_stop_q  <= '0;
     axi_dec_q   <= 32'h0;
+    axi_dec_use_d <= 32'h0;
   end else if (start_cycle) begin
     axi_start_q <= set_axi_start_i;
     axi_stop_q  <= set_axi_stop_i;
     axi_dec_q   <= set_axi_dec_i;
+    axi_dec_use_d <= set_axi_dec_i;
+  end else begin
+    axi_dec_use_d <= axi_dec_use;
   end
 end
 
@@ -347,7 +380,7 @@ assign axi_last_pre_o = last_pre_pulse;
 //
 //  decimation and sample index
 
-assign dec_safe = (axi_dec_use == 0) ? 32'd1 : axi_dec_use;
+assign dec_safe = (axi_dec_use_d == 0) ? 32'd1 : axi_dec_use_d;
 assign dec_step = dec_cnt_q == dec_safe;
 assign fifo_active = rd_state_q != RD_IDLE;
 assign fifo_ready  = rd_state_q == RD_ACTIVE;

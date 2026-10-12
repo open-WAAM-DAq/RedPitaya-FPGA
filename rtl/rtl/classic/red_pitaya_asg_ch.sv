@@ -367,6 +367,7 @@ rp_asg_pointer_math #(
    .PNT_SIZE (PNT_SIZE),
    .SIZE_W   (RSZ+16)
 ) i_pointer_math (
+   .clk_i           (dac_clk_i),
    .pointer_i        (dac_pnt),
    .step_i           ({set_step[RSZ+15:0],set_step_lo}),
    .size_i           (set_size_i),
@@ -472,6 +473,7 @@ module rp_asg_pointer_math #(
    parameter int PNT_SIZE = 62,
    parameter int SIZE_W = PNT_SIZE-32
 )(
+   input  logic                clk_i,
    input  logic [PNT_SIZE-1:0] pointer_i,
    input  logic [PNT_SIZE-1:0] step_i,
    input  logic [SIZE_W-1:0]   size_i,
@@ -482,6 +484,10 @@ module rp_asg_pointer_math #(
 );
 
 localparam int HI_W = PNT_SIZE-32;
+
+logic [PNT_SIZE:0] next_pointer_q;
+logic [PNT_SIZE:0] wrapped_pointer_q;
+logic below_limit_q;
 
 logic [32:0] low_sum;
 logic [HI_W:0] high_sum_c0;
@@ -503,16 +509,23 @@ always_comb begin
    wrap_limit_minus_step = wrap_limit - step_ext;
 
    if (advance_i)
-      next_pointer_o = {high_sum,low_sum[31:0]};
+      next_pointer_q = {high_sum,low_sum[31:0]};
    else
-      next_pointer_o = {1'b0,pointer_i};
+      next_pointer_q = {1'b0,pointer_i};
    if (advance_i)
-      below_limit_o = (step_ext < wrap_limit) &&
+      below_limit_q = (step_ext < wrap_limit) &&
                       ({1'b0,pointer_i} < wrap_limit_minus_step);
    else
-      below_limit_o = {1'b0,pointer_i} < wrap_limit;
+      below_limit_q = {1'b0,pointer_i} < wrap_limit;
 
-   wrapped_pointer_o = next_pointer_o - wrap_limit;
+   wrapped_pointer_q = next_pointer_q - wrap_limit;
+end
+
+// Pipeline the outputs to break the long combinational path
+always_ff @(posedge clk_i) begin
+   next_pointer_o <= next_pointer_q;
+   wrapped_pointer_o <= wrapped_pointer_q;
+   below_limit_o <= below_limit_q;
 end
 
 endmodule
