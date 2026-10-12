@@ -240,7 +240,8 @@ assign std.TREADY = stn.TREADY;
 ////////////////////////////////////////////////////////////////////////////////
 
 la_trg #(
-  .DT (DT)
+  .DT (DT),
+  .LEVEL_ONLY (1)
 ) la_trg (
   // control
   .ctl_rst  (ctl_rst),
