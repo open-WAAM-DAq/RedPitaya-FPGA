@@ -150,6 +150,14 @@ BUFR #(.SIM_DEVICE("7SERIES"), .BUFR_DIVIDE("2")) i_BUFR_clk
 
 BUFG i_parclk_buf (.O(par_clk_o), .I(par_clk));
 
+// Add IDELAYCTRL for data IDELAYE2 (always needed now that we have IDELAYE2 for data)
+IDELAYCTRL
+delayctrl_dat (
+ .RDY    (  ),
+ .REFCLK (  dly_clk_i  ),
+ .RST    ( !cfg_en_i   )
+);
+
 // Reset on receive clock domain
 always @(posedge par_clk or negedge cfg_en_i) begin
    if (cfg_en_i == 1'b0) begin
@@ -191,6 +199,38 @@ reg            par_val      ;
 reg  [ 2-1: 0] par_train_r  ;
 reg            par_train    ;
 
+// Add IDELAYE2 for data to match clock path delay and fix hold violation
+// This is needed to balance the clock and data path delays for ISERDES2
+// Using FIXED mode without clock input - delay is applied statically
+wire           ser_dat_dly  ;
+
+IDELAYE2
+# (
+  .CINVCTRL_SEL           ( "FALSE"    ),
+  .DELAY_SRC              ( "IDATAIN"  ),
+  .HIGH_PERFORMANCE_MODE  ( "TRUE"     ),
+  .IDELAY_TYPE            ( "FIXED"    ),
+  .IDELAY_VALUE           (  31         ),  // Max delay ~2.4ns to match clock path
+  .REFCLK_FREQUENCY       (  200.0     ),
+  .PIPE_SEL               ( "FALSE"    ),
+  .SIGNAL_PATTERN         ( "DATA"     )
+)
+idelaye2_dat
+(
+  .DATAOUT                (  ser_dat_dly  ),
+  .DATAIN                 (  1'b0         ),
+  .C                      (                ),  // Leave open for FIXED mode with IDATAIN
+  .CE                     (  1'b1         ),  // Enable the delay element
+  .INC                    (  1'b0         ),
+  .IDATAIN                (  ser_dat_i[GV] ),
+  .LD                     ( !cfg_en_i     ),
+  .LDPIPEEN               (  1'b0         ),
+  .REGRST                 (  1'b0         ),
+  .CNTVALUEIN             (  5'b00000     ),
+  .CNTVALUEOUT            (),
+  .CINVCTRL               (  1'b0         )
+);
+
 ISERDESE2
 #(
   .DATA_RATE         ( "DDR"          ),
@@ -200,7 +240,7 @@ ISERDESE2
   .DYN_CLK_INV_EN    ( "FALSE"        ),
   .NUM_CE            (  2             ),
   .OFB_USED          ( "FALSE"        ),
-  .IOBDELAY          ( "NONE"         ), // Use input at D to output the data on Q
+  .IOBDELAY          ( "IBUF"        ), // Use internal IDELAY, external IDELAYE2 on DDLY
   .SERDES_MODE       ( "MASTER"       )
 )
 i_iserdese 
@@ -223,8 +263,8 @@ i_iserdese
   .CLKB              ( !ser_clk       ),  // Locally inverted fast 
   .CLKDIV            (  par_clk       ),  // Slow clock from BUFR.
   .CLKDIVP           (  1'b0          ),
-  .D                 (  ser_dat_i[GV] ),  // 1-bit Input signal from IOB 
-  .DDLY              (  1'b0          ),  // 1-bit Input from Input Delay component 
+  .D                 (  1'b0          ),  // Not used - using external IDELAYE2 on DDLY
+  .DDLY              (  ser_dat_dly   ),  // 1-bit Input from IDELAYE2 (delayed) 
   .RST               ( !cfg_en_i      ),  // 1-bit Asynchronous reset only.
   .SHIFTIN1          (  1'b0          ),
   .SHIFTIN2          (  1'b0          ),
