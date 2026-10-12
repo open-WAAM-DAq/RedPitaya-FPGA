@@ -83,8 +83,26 @@ reg             adc_dv_div  ;
 reg  [ 34-1: 0] sign_sr     ;
 reg             sign_curr   ;
 reg signed [31:0] adc_dat_raw;
-wire dec_valid = (adc_dec_cnt >= set_dec_i);
-wire hres_active = set_hres_en_i;
+
+// Pipeline registers for configuration signals to break long combinational paths
+reg  [ 17-1: 0] set_dec_q;
+reg             set_avg_en_q;
+reg             set_hres_en_q;
+
+always @(posedge adc_clk_i) begin
+  if (!adc_rstn_i) begin
+    set_dec_q <= 17'h0;
+    set_avg_en_q <= 1'b0;
+    set_hres_en_q <= 1'b0;
+  end else begin
+    set_dec_q <= set_dec_i;
+    set_avg_en_q <= set_avg_en_i;
+    set_hres_en_q <= set_hres_en_i;
+  end
+end
+
+wire dec_valid = (adc_dec_cnt >= set_dec_q);
+wire hres_active = set_hres_en_q;
 wire signed [31:0] dec_dat_base = $signed(dec_dat_i);
 wire signed [31:0] dec_dat_hres = hres_active ? (dec_dat_base <<< HRES_SHL) : dec_dat_base;
 wire signed [31:0] adc_sum_s = $signed(adc_sum);
@@ -106,7 +124,7 @@ dec_avg_div
    .clk_i(adc_clk_i) ,
    .rst_i(adc_rstn_i),
    .x_i(sum_uns)   , // numerator (dividend) [ XDW-1: 0]
-   .y_i(set_dec_i)     , // denominator (divisor)[ YDW-1: 0]   // Both input values must be unsigned !!!
+   .y_i(set_dec_q)     , // denominator (divisor)[ YDW-1: 0]   // Both input values must be unsigned !!!
    .dv_i(div_go)     , //ready to start division
    .q_o(div_out)   , // quotient [ XDW-1: 0]
    .dv_o(div_ok)     // result available
@@ -125,7 +143,7 @@ if (adc_rstn_i == 1'b0) begin
    sign_sr   <= 34'b0;
 end else begin
    sign_sr<={sign_sr[34-2:0],sign_curr}; // sign shift register
-   if(adc_dec_cnt >= set_dec_i && set_dec_i >= 17'd16) begin //save sign and sum 
+   if(adc_dec_cnt >= set_dec_q && set_dec_q >= 17'd16) begin //save sign and sum 
       sign_curr <= adc_sum[32-1];
       sum_in    <= adc_sum;
       dat_got     <= 1'b1; //data was acquired
@@ -172,7 +190,7 @@ end else begin
       adc_sum   <= $signed(adc_sum) + $signed(dec_dat_hres) ;
    end
 
-   case (set_dec_i & {17{set_avg_en_i}}) // allowed dec factors: 1,2,4,8; if 16 or greater, use divider
+   case (set_dec_q & {17{set_avg_en_q}}) // allowed dec factors: 1,2,4,8; if 16 or greater, use divider
       17'h0     : begin adc_dat_raw = dec_dat_hres;      adc_dv <= dec_valid;   end // if averaging is disabled
       17'h1     : begin adc_dat_raw = adc_sum_s;         adc_dv <= dec_valid;   end
       17'h2     : begin adc_dat_raw = adc_sum_s >>> 1;   adc_dv <= dec_valid;   end

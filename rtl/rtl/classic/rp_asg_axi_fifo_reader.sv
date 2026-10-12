@@ -305,16 +305,16 @@ always_ff @(posedge dac_clk_i) begin
     period_words_d <= ((axi_stop_use_d + 4 - axi_start_use_d) >> 3) + 1;
     
     if (cycle_reload) begin
-      // On cycle reload, use the CURRENT period_words (computed from current inputs)
-      // This is the initial load, must use current values
-      words_left_q   <= period_words;
-      period_words_q <= period_words;
+      // On cycle reload, use the PIPELINED period_words_d to break long combinational paths
+      // This ensures timing closure by adding a 1-cycle latency to the initial load
+      words_left_q   <= period_words_d;
+      period_words_q <= period_words_d;
       cycle_cnt_q    <= set_cyc_cnt_i;
     end else if (advance_cycle) begin
       // On advance cycle, use the PIPELINED period_words_d (from previous cycle)
       // This breaks the long combinational path: preload_timer -> ... -> period_words
       words_left_q   <= period_words_d;
-      period_words_q <= period_words;
+      period_words_q <= period_words_d;
       if (cycle_cnt_q > 16'h1)
         cycle_cnt_q <= cycle_cnt_q - 16'h1;
     end else if (consume_word) begin
