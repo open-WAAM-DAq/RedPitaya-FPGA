@@ -77,6 +77,15 @@ module dac_top
   output wire                             m_axi_dac_rready_o     // read response ready
 );
 
+// static configuration, registered on the DAC clock (timing of the 250-12)
+reg  [M_AXI_DAC_ADDR_BITS-1:0] dac_step_r;
+reg  [16-1:0]                  dac_conf_r;
+always @(posedge clk_adc)
+begin
+  dac_step_r <= dac_step;
+  dac_conf_r <= dac_conf;
+end
+
 ////////////////////////////////////////////////////////////
 // Parameters
 ////////////////////////////////////////////////////////////
@@ -109,8 +118,8 @@ wire [DAC_DATA_BITS-1:0]    dac_data_raw;
 wire [DAC_DATA_BITS-1:0]    dac_data_shiftr;
 wire [DAC_DATA_BITS-1:0]    dac_calibrated;
 
-wire set_zero = dac_conf[OUT_ZERO];
-wire set_8bit = dac_conf[BIT_MODE];
+wire set_zero = dac_conf_r[OUT_ZERO];
+wire set_8bit = dac_conf_r[BIT_MODE];
 reg  hw_trigger_adc;
 wire playback_trigger_adc = event_num_trig | hw_trigger_adc;
 
@@ -121,7 +130,7 @@ assign dac_data_shiftr = dac_data_raw >>> dac_outshift;
 // 
 ////////////////////////////////////////////////////////////
   
-reg rstn_cal, rstn_smm;
+(* keep = "true", max_fanout = 64 *) reg rstn_cal, rstn_smm;
 always @(posedge clk_adc) // resolve high fanout timing issues
 begin
   rstn_cal <= adc_rstn;
@@ -145,7 +154,7 @@ rp_dma_mm2s #(
   .ctrl_val       (ctrl_val),
   .reg_sts        (reg_sts),
 
-  .dac_step         (dac_step),
+  .dac_step         (dac_step_r),
   .dac_rp           (dac_rp),
   .dac_buf_size     (dac_buf_size),
   .dac_buf1_adr     (dac_buf1_adr),

@@ -71,6 +71,17 @@ assign sts_armed      = cfg_trigger_mode &&
                         (state_cs == PRE_SAMP_WAIT_TRIG) &&
                         !ctl_stop;
 
+// the pre/post trigger counts are static while the core runs: compare against registered
+// values (timing at 250 MHz)
+reg  [CNT_BITS-1:0] pre_samp_m1, post_samp_m1;
+reg                 pre_samp_nz;
+always @(posedge clk)
+begin
+  pre_samp_m1  <= cfg_trig_pre_samp - 1;
+  post_samp_m1 <= cfg_trig_post_samp - 1;
+  pre_samp_nz  <= (cfg_trig_pre_samp != 0);
+end
+
 // Only a rising edge of the trigger seen while armed is accepted, as in the DAC playback:
 // a trigger that is already high when the core arms waits for its next edge.
 reg ctl_trig_d1;
@@ -202,7 +213,7 @@ begin
           state_ns = cfg_trigger_mode ? PRE_SAMP_WAIT_TRIG : STRM_SAMP;
         end else begin     
           // Check if the pre buffer is enabled
-          if (cfg_trig_pre_samp != 0) begin
+          if (pre_samp_nz) begin
             state_ns = PRE_SAMP_FILL;
           end else begin
             state_ns = POST_SAMP_WAIT_TRIG;        
@@ -213,7 +224,7 @@ begin
     
     // PRE_SAMP_FILL - Fills the pre sample buffer 
     PRE_SAMP_FILL: begin
-      if ((s_axis_tvalid == 1) && (sts_trig_pre_cnt == cfg_trig_pre_samp-1)) begin
+      if ((s_axis_tvalid == 1) && (sts_trig_pre_cnt == pre_samp_m1)) begin
         state_ns = PRE_SAMP_WAIT_TRIG;  
       end
     end
@@ -240,7 +251,7 @@ begin
     
     // POST_SAMP_FILL - Fills the post sample buffer 
     POST_SAMP_FILL: begin
-      if ((s_axis_tvalid == 1) && (sts_trig_post_cnt == cfg_trig_post_samp-1)) begin
+      if ((s_axis_tvalid == 1) && (sts_trig_post_cnt == post_samp_m1)) begin
         state_ns = IDLE;  
       end
     end    
@@ -294,7 +305,7 @@ begin
       // there is no pre buffer and a trigger has been detected or
       // streaming mode
       if (((ctl_start == 1) && (cfg_mode == NORM_MODE) &&
-           (cfg_trig_pre_samp != 0)) ||
+           pre_samp_nz) ||
           ((state_cs == POST_SAMP_WAIT_TRIG) && (ctl_trig == 1)) ||
           ((ctl_start == 1) && (cfg_mode == STREAM_MODE) && !cfg_trigger_mode) ||
           ((state_cs == PRE_SAMP_WAIT_TRIG) && (cfg_mode == STREAM_MODE) && !cfg_trigger_mode) ||
@@ -320,7 +331,7 @@ begin
     case (state_cs)
       // POST_SAMP_FILL - Fills the post sample buffer 
       POST_SAMP_FILL: begin
-        if ((s_axis_tvalid == 1) && (sts_trig_post_cnt == cfg_trig_post_samp-1)) begin
+        if ((s_axis_tvalid == 1) && (sts_trig_post_cnt == post_samp_m1)) begin
           sts_last = 1;  
         end
       end    

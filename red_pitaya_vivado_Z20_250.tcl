@@ -248,6 +248,15 @@ foreach file $rptFiles {
 # write checkpoint design
 ################################################################################
 
+# stream_app runs its scope and DAC at 250 MHz: physical optimization after placement and
+# after routing adds margin (v0.94 and logic keep their flow)
+if {$prj_name == "stream_app"} {
+   set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
+   set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
+   set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
+   set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
+}
+
 launch_runs impl_1
 wait_on_run impl_1
 

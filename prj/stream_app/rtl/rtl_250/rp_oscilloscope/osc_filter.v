@@ -1,6 +1,8 @@
 `timescale 1ns / 1ps
 
-module osc_filter(
+module osc_filter #(
+  parameter EN_FILTER = 1)  // 0: the bypass only, the filter is not built
+(
   input  wire         clk,  
   input  wire         rst_n,    
   // Slave AXI-S
@@ -90,7 +92,7 @@ assign coeff_aa       = cfg_coeff_aa;
 assign coeff_bb       = cfg_coeff_bb;
 assign coeff_kk       = cfg_coeff_kk;
 assign coeff_pp       = cfg_coeff_pp;
-assign m_axis_tdata   = (cfg_bypass == 1'b0) ? r5_reg : din;
+assign m_axis_tdata   = (EN_FILTER && (cfg_bypass == 1'b0)) ? r5_reg : din;
 //assign m_axis_tdata   = r1_reg[35:20];
 
 assign m_axis_tvalid  = tvalid_pipe[3];

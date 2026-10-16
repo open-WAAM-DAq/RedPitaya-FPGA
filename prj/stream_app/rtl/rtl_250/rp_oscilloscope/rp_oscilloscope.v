@@ -202,7 +202,7 @@ assign s_axis_osc_tdata[4*16-1:3*16] = adc_data_ch4_signed;
 */
 
 
-reg rstn_cfg;
+(* keep = "true", max_fanout = 64 *) reg rstn_cfg;  // not merged with the resets of the channels
 always @(posedge clk)
 begin
   rstn_cfg <= rst_n;
@@ -275,6 +275,7 @@ wire                        cfg_timestamp_init_we;
 wire [31:0]                 cfg_dma_sts;
 reg                         timestamp_init_toggle_axi;
 reg  [1:0]                  timestamp_init_toggle_adc;
+reg                         timestamp_load_adc;  // the init value arrived: load it next clock
 reg  [63:0]                 cfg_timestamp_init_adc1;
 reg  [63:0]                 cfg_timestamp_init_adc2;
 reg  [63:0]                 timestamp_counter_adc;
@@ -326,7 +327,10 @@ wire [4*32-1:0]             diag4;
 */
 
 // the triggers taken by CH1 (all channels take the same ones)
-wire sts_trig_taken = cfg_trigger_mode & trig_out1;
+// registered: the trigger comes straight from the trigger sources (timing at 250 MHz)
+reg  sts_trig_taken;
+always @(posedge clk)
+  sts_trig_taken <= cfg_trigger_mode & trig_out1;
 
 genvar GL;
 generate
@@ -393,13 +397,16 @@ begin
     cfg_timestamp_init_adc1   <= 64'd0;
     cfg_timestamp_init_adc2   <= 64'd0;
     timestamp_init_toggle_adc <= 2'b00;
+    timestamp_load_adc        <= 1'b0;
     timestamp_counter_adc     <= 64'd0;
   end else begin
     cfg_timestamp_init_adc1   <= cfg_timestamp_init;
     cfg_timestamp_init_adc2   <= cfg_timestamp_init_adc1;
     timestamp_init_toggle_adc <= {timestamp_init_toggle_adc[0], timestamp_init_toggle_axi};
+    // registered load strobe (timing at 250 MHz); the init value is stable by then
+    timestamp_load_adc        <= timestamp_init_toggle_adc[1] != timestamp_init_toggle_adc[0];
 
-    if (timestamp_init_toggle_adc[1] != timestamp_init_toggle_adc[0])
+    if (timestamp_load_adc)
       timestamp_counter_adc <= cfg_timestamp_init_adc2;
     else
       timestamp_counter_adc <= timestamp_counter_adc + 64'd1;

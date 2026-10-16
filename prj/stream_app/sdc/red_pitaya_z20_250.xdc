@@ -14,8 +14,8 @@ set_false_path -from [get_clocks clk_125_system_clk_gen_0] -to [get_clocks clk_f
 set_false_path -from [get_clocks clk_125_system_clk_gen_0] -to [get_clocks clk_200_system_clk_gen_0]
 set_false_path -from [get_clocks clk_200_system_clk_gen_0] -to [get_clocks clk_125_system_clk_gen_0]
 
-set_false_path -from [get_clocks clk_125_system_clk_gen_0] -to [get_clocks pll_ref]
-set_false_path -from [get_clocks pll_ref]                  -to [get_clocks clk_125_system_clk_gen_0]
+set_false_path -from [get_clocks clk_125_system_clk_gen_0] -to [get_clocks pll_ref_i]
+set_false_path -from [get_clocks pll_ref_i]                -to [get_clocks clk_125_system_clk_gen_0]
 set_false_path -from [get_clocks clk_10_system_clk_gen_0]  -to [get_clocks clk_125_system_clk_gen_0]
 set_clock_groups -asynchronous -group [get_clocks adc_clk] -group [get_clocks clk_125_system_clk_gen_0]
 set_clock_groups -asynchronous -group [get_clocks adc_clk] -group [get_clocks clk_200_system_clk_gen_0]

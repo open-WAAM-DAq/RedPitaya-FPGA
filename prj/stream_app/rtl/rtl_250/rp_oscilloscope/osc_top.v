@@ -108,6 +108,39 @@ module osc_top
   output wire                             m_axi_bready       
 );
 
+// The configuration of the data path does not change while the core runs: it is registered
+// here, so the 250 MHz paths start at a local register (timing of the 250-12); keep: one
+// copy per channel, next to its data path
+(* keep = "true" *) reg  [TRIG_CNT_BITS-1:0] cfg_trig_pre_samp_r;
+(* keep = "true" *) reg  [TRIG_CNT_BITS-1:0] cfg_trig_post_samp_r;
+(* keep = "true" *) reg  [S_AXIS_DATA_BITS-1:0] cfg_trig_low_level_r;
+(* keep = "true" *) reg  [S_AXIS_DATA_BITS-1:0] cfg_trig_high_level_r;
+(* keep = "true" *) reg  cfg_trig_edge_r;
+(* keep = "true" *) reg  [DEC_CNT_BITS-1:0] cfg_dec_factor_r;
+(* keep = "true" *) reg  [DEC_SHIFT_BITS-1:0] cfg_dec_rshift_r;
+(* keep = "true" *) reg  cfg_avg_en_r;
+(* keep = "true" *) reg  cfg_hres_en_r;
+(* keep = "true" *) reg  cfg_legacy_calib_r;
+(* keep = "true" *) reg  [16-1:0] cfg_calib_offset_r;
+(* keep = "true" *) reg  [16-1:0] cfg_calib_gain_r;
+(* keep = "true" *) reg  cfg_filt_bypass_r;
+always @(posedge clk_adc)
+begin
+  cfg_trig_pre_samp_r <= cfg_trig_pre_samp_i;
+  cfg_trig_post_samp_r <= cfg_trig_post_samp_i;
+  cfg_trig_low_level_r <= cfg_trig_low_level_i;
+  cfg_trig_high_level_r <= cfg_trig_high_level_i;
+  cfg_trig_edge_r <= cfg_trig_edge_i;
+  cfg_dec_factor_r <= cfg_dec_factor_i;
+  cfg_dec_rshift_r <= cfg_dec_rshift_i;
+  cfg_avg_en_r <= cfg_avg_en_i;
+  cfg_hres_en_r <= cfg_hres_en_i;
+  cfg_legacy_calib_r <= cfg_legacy_calib_i;
+  cfg_calib_offset_r <= cfg_calib_offset_i;
+  cfg_calib_gain_r <= cfg_calib_gain_i;
+  cfg_filt_bypass_r <= cfg_filt_bypass_i;
+end
+
 ////////////////////////////////////////////////////////////
 // Signals
 ////////////////////////////////////////////////////////////
@@ -240,7 +273,9 @@ assign diag2_o = trig_cnt;
 assign diag3_o = clk_cnt;
 assign diag4_o = cfg_dma_diags;
 
-reg rstn_fil, rstn_cal, rstn_dec, rstn_trg, rstn_acq, rstn_smm;
+// separate reset registers: keep stops synthesis from merging them into one net that reaches
+// both channels and the timestamps, max_fanout lets the placer replicate them further
+(* keep = "true", max_fanout = 64 *) reg rstn_fil, rstn_cal, rstn_dec, rstn_trg, rstn_acq, rstn_smm;
 always @(posedge clk_adc) // resolve high fanout timing issues
 begin
   rstn_fil <= adc_rstn;
@@ -276,13 +311,15 @@ osc_calib #(
   .m_axis_tvalid    (calib_tvalid),
   .m_axis_tready    (calib_tready),
   // Config
-  .cfg_calib_offset (cfg_calib_offset_i), 
-  .cfg_calib_gain   (cfg_calib_gain_i));
+  .cfg_calib_offset (cfg_calib_offset_r), 
+  .cfg_calib_gain   (cfg_calib_gain_r));
 
-assign filt_in_tdata  = cfg_legacy_calib_i ? s_axis_tdata  : calib_tdata;
-assign filt_in_tvalid = cfg_legacy_calib_i ? s_axis_tvalid : calib_tvalid;
+assign filt_in_tdata  = cfg_legacy_calib_r ? s_axis_tdata  : calib_tdata;
+assign filt_in_tvalid = cfg_legacy_calib_r ? s_axis_tvalid : calib_tvalid;
 
-osc_filter i_dfilt (
+// the 250-12 has no front end filter to equalize (profile: is_fast_adc_filter_present =
+// false, the streaming server always sets the bypass): the filter is not built
+osc_filter #(.EN_FILTER (0)) i_dfilt (
    // ADC
   .clk              ( clk_adc     ),  // ADC clock
   .rst_n            ( rstn_fil    ),  // ADC reset - active low
@@ -295,7 +332,7 @@ osc_filter i_dfilt (
   .m_axis_tvalid    (filt_tvalid),
   .m_axis_tready    (filt_tready),
    // configuration
-  .cfg_bypass      ( cfg_filt_bypass_i   ),
+  .cfg_bypass      ( cfg_filt_bypass_r   ),
   .cfg_coeff_aa    ( cfg_filt_coeff_aa_i),  // config AA coefficient
   .cfg_coeff_bb    ( cfg_filt_coeff_bb_i ),  // config BB coefficient
   .cfg_coeff_kk    ( cfg_filt_coeff_kk_i ),  // config KK coefficient
@@ -313,11 +350,11 @@ osc_calib #(
   .m_axis_tdata     (legacy_calib_tdata),
   .m_axis_tvalid    (legacy_calib_tvalid),
   .m_axis_tready    (dec_tready),
-  .cfg_calib_offset (cfg_calib_offset_i),
-  .cfg_calib_gain   (cfg_calib_gain_i));
+  .cfg_calib_offset (cfg_calib_offset_r),
+  .cfg_calib_gain   (cfg_calib_gain_r));
 
-assign dec_src_tdata  = cfg_legacy_calib_i ? legacy_calib_tdata : filt_tdata;
-assign dec_src_tvalid = cfg_legacy_calib_i ? legacy_calib_tvalid : filt_tvalid;
+assign dec_src_tdata  = cfg_legacy_calib_r ? legacy_calib_tdata : filt_tdata;
+assign dec_src_tvalid = cfg_legacy_calib_r ? legacy_calib_tvalid : filt_tvalid;
 
 ////////////////////////////////////////////////////////////
 // Name : Decimation
@@ -325,10 +362,23 @@ assign dec_src_tvalid = cfg_legacy_calib_i ? legacy_calib_tvalid : filt_tvalid;
 ////////////////////////////////////////////////////////////
 assign dec_indata = ramp_en      ? ramp_sig     : 
                    (loopback_dac ? s_axis_tdata : dec_src_tdata);    
-wire signed [S_AXIS_DATA_BITS-1:0] trig_low_level =
-  cfg_hres_en_i ? ($signed(cfg_trig_low_level_i) <<< 2) : $signed(cfg_trig_low_level_i);
-wire signed [S_AXIS_DATA_BITS-1:0] trig_high_level =
-  cfg_hres_en_i ? ($signed(cfg_trig_high_level_i) <<< 2) : $signed(cfg_trig_high_level_i);
+reg signed [S_AXIS_DATA_BITS-1:0] trig_low_level;
+reg signed [S_AXIS_DATA_BITS-1:0] trig_high_level;
+always @(posedge clk_adc)
+begin
+  trig_low_level  <= cfg_hres_en_r ? ($signed(cfg_trig_low_level_r) <<< 2) : $signed(cfg_trig_low_level_r);
+  trig_high_level <= cfg_hres_en_r ? ($signed(cfg_trig_high_level_r) <<< 2) : $signed(cfg_trig_high_level_r);
+end
+
+// one register between the source selection and the decimator (timing at 250 MHz); the
+// stream does not stall, every source gets the same extra clock
+reg  [S_AXIS_DATA_BITS-1:0] dec_in_r;
+reg                         dec_in_valid_r;
+always @(posedge clk_adc)
+begin
+  dec_in_r       <= dec_indata;
+  dec_in_valid_r <= dec_src_tvalid;
+end
 
 osc_decimator #(
   .AXIS_DATA_BITS (S_AXIS_DATA_BITS), 
@@ -337,17 +387,17 @@ osc_decimator #(
   U_osc_decimator(
   .clk            (clk_adc),                   
   .rst_n          (rstn_dec),        
-  .s_axis_tdata   (dec_indata),          
-  .s_axis_tvalid  (dec_src_tvalid),     
+  .s_axis_tdata   (dec_in_r),
+  .s_axis_tvalid  (dec_in_valid_r),
   .s_axis_tready  (filt_tready),                                                                 
   .m_axis_tdata   (dec_tdata),          
   .m_axis_tvalid  (dec_tvalid),    
   .m_axis_tready  (dec_tready),      
   .ctl_rst        (event_num_reset),                                                                     
-  .cfg_avg_en     (cfg_avg_en_i),            
-  .cfg_hres_en    (cfg_hres_en_i),
-  .cfg_dec_factor (cfg_dec_factor_i),        
-  .cfg_dec_rshift (cfg_dec_rshift_i));       
+  .cfg_avg_en     (cfg_avg_en_r),            
+  .cfg_hres_en    (cfg_hres_en_r),
+  .cfg_dec_factor (cfg_dec_factor_r),        
+  .cfg_dec_rshift (cfg_dec_rshift_r));       
 
 ////////////////////////////////////////////////////////////
 // Name : Trigger
@@ -363,7 +413,7 @@ osc_trigger #(
   .ctl_rst              (event_num_reset),                                                    
   .cfg_trig_low_level   (trig_low_level),          
   .cfg_trig_high_level  (trig_high_level),         
-  .cfg_trig_edge        (cfg_trig_edge_i),                                                 
+  .cfg_trig_edge        (cfg_trig_edge_r),                                                 
   .trig                 (trig_op),                                                    
   .s_axis_tdata         (dec_tdata),                
   .s_axis_tvalid        (dec_tvalid),               
@@ -398,8 +448,8 @@ osc_acquire #(
   .cfg_trig_blocks        (cfg_trig_blocks_i),
   .cfg_block_samples      (block_samples),
   .cfg_mode               (dma_mode),
-  .cfg_trig_pre_samp      (cfg_trig_pre_samp_i),  
-  .cfg_trig_post_samp     (cfg_trig_post_samp_i),   
+  .cfg_trig_pre_samp      (cfg_trig_pre_samp_r),  
+  .cfg_trig_post_samp     (cfg_trig_post_samp_r),   
   .sts_start              (event_sts_start), 
   .sts_stop               (event_sts_stop),
   .sts_trig               (event_sts_trig),
