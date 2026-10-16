@@ -9,3 +9,13 @@
 	reg = <0x40000000 0x100000>,<0x1000000 0x80000>;
 	reg-names = "regset", "buffer";
 };
+
+/* External trigger conditioner of the 250-12 (ext_trig_cond_250, register 0x68): no IP in the
+ * block design describes the m_axi_trig port, uio_lib finds it by this node name. */
+&amba {
+	rp_ext_trig@40200000 {
+		compatible = "generic-uio";
+		reg = <0x40200000 0x1000>;
+		reg-names = "regset";
+	};
+};

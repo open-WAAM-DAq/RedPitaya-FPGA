@@ -105,7 +105,7 @@ module rp_gpio #(
   output wire [3:0]                             m_axi_gpio_awcache,   
   output wire                                   m_axi_gpio_awvalid,   
   input  wire                                   m_axi_gpio_awready,   
-  output wire [M_AXI_GPIO_ADDR_BITS-1:0]        m_axi_gpio_wdata,     
+  output wire [M_AXI_GPIO_DATA_BITS-1:0]        m_axi_gpio_wdata,     
   output wire [((M_AXI_GPIO_DATA_BITS/8)-1):0]  m_axi_gpio_wstrb,     
   output wire                                   m_axi_gpio_wlast,     
   output wire                                   m_axi_gpio_wvalid,    
@@ -190,10 +190,11 @@ reg  [TW-1:0] cts_stp;
 reg  [TN-1:0] cfg_trg;  // trigger select
 
 // trigger source configuration
-DT              cfg_cmp_msk;  // comparator mask
-DT              cfg_cmp_val;  // comparator value
-DT              cfg_edg_pos;  // edge positive
-DT              cfg_edg_neg;  // edge negative
+// pattern trigger and input polarity: bits 7:0 the P lines, 15:8 the N lines
+reg  [16-1:0]   cfg_cmp_msk;  // comparator mask
+reg  [16-1:0]   cfg_cmp_val;  // comparator value
+reg  [16-1:0]   cfg_edg_pos;  // edge positive
+reg  [16-1:0]   cfg_edg_neg;  // edge negative
 
 // decimation configuration
 reg [DCW-1:0] cfg_dec;  // decimation factor
@@ -206,13 +207,34 @@ reg  [CW-1:0] sts_cur;  // current     counter status
 reg  [CW-1:0] sts_lst;  // last packet counter status
 
 // bitwise input polarity
-DT              cfg_pol;
+reg  [16-1:0]   cfg_pol;
 
 // external trigger conditioner configuration
 reg           cfg_ext_trig_condition_en;
 reg           cfg_ext_trig_edge_sel;      // 0 - rising edge, 1 - falling edge
 reg           cfg_ext_trig_debounce_en;
-reg  [8-1:0]  cfg_ext_trig_debounce_len;
+reg  [16-1:0] cfg_ext_trig_debounce_len;
+reg           cfg_ext_trig_sim_en;        // a register level replaces the trigger inputs
+reg           cfg_ext_trig_sim_level;
+reg           cfg_ext_trig_dio0_dis;      // DIO0_P does not drive the external trigger
+
+// trigger mode: bit 0 input, bit 1 output
+reg  [2-1:0]  cfg_trig_mode;
+wire          sts_out_armed;
+wire          sts_in_armed;
+wire          ctl_trg;
+wire [32-1:0] in_dma_diags;
+
+// input block mode: N buffers per trigger (0x0C), triggers taken (0xD8), 64 bit lost
+// counters of the input buffers (0xE0..0xEC)
+reg  [16-1:0] cfg_trig_blocks;
+wire          sts_in_trig_taken;
+reg  [32-1:0] sts_in_trig_count;
+wire [64-1:0] in_buf1_lost, in_buf2_lost;
+
+// AXI handshake counters of both DMA engines, free running (registers 0xC8..0xD4)
+reg  [16-1:0] axi_aw_cnt, axi_b_cnt, axi_ar_cnt, axi_rlast_cnt;
+reg  [32-1:0] axi_w_cnt, axi_r_cnt;
 
 //event selector
 reg [EVENT_SRC_NUM-1: 0] event_sel;
@@ -240,6 +262,9 @@ wire [32-1:0]                    buf1_ms_cnt;
 wire [32-1:0]                    buf2_ms_cnt;
 wire [M_AXI_GPIO_ADDR_BITS-1:0]   gpio_in_wp;
 wire [M_AXI_GPIO_ADDR_BITS-1:0]   gpio_out_rp;
+wire [ 5-1:0]                    cfg_sts_reg_in;
+wire                             trg_intr;
+wire                             dma_intr;
 
 assign s_axi_reg_rlast = s_axi_reg_rvalid;
 // direction
@@ -261,7 +286,7 @@ assign gpion_o = gpio_outdat[ 7:0] ;
 
 assign dirp = dir_p;
 assign dirn = dir_n;
-wire ext_trig_raw = ext_trig_i | gpiop_i[0];
+wire ext_trig_pin = ext_trig_i | (gpiop_i[0] & ~cfg_ext_trig_dio0_dis);
 
 `else
 IOBUF iobuf_gpio_p [8-1:0] (.O (gpio_p_i), .IO(exp_p_io), .I(gpio_p_o), .T(dir_p));
@@ -270,20 +295,31 @@ IOBUF iobuf_gpio_n [8-1:0] (.O (gpio_n_i), .IO(exp_n_io), .I(gpio_n_o), .T(dir_n
 assign sti.TDATA[0] = gpio_p_i ;
 assign sti.TDATA[1] = gpio_n_i ;
 
-assign gpio_p_o = sto.TDATA[0][15:8] ;
-assign gpio_n_o = sto.TDATA[0][ 7:0] ;
-wire ext_trig_raw = ext_trig_i | gpio_p_i[0];
+// the lines keep the last valid output sample, as in the simulation branch: the stream data
+// bus carries arbitrary values between samples and while the output is idle
+always @(posedge sto.ACLK) begin
+    if (~rstn_r)
+        gpio_outdat <= '0;
+    else if (sto.TVALID)
+        gpio_outdat <= sto.TDATA;
+end
+
+assign gpio_p_o = gpio_outdat[15:8] ;
+assign gpio_n_o = gpio_outdat[ 7:0] ;
+wire ext_trig_pin = ext_trig_i | (gpio_p_i[0] & ~cfg_ext_trig_dio0_dis);
 
 `endif
 
 ////////////////////////////////////////////////////////////////////////////////
-// External trigger conditioner: legacy raw level path when disabled (reset
-// default), synchronized/debounced/edge-selected one-clk pulse when enabled.
+// External trigger conditioner: level path when disabled (reset default),
+// edge-selected one-clk pulse when enabled. Both go through the synchronizer of
+// the debouncer, so every channel sees the trigger on the same clock.
 ////////////////////////////////////////////////////////////////////////////////
+wire ext_trig_raw = cfg_ext_trig_sim_en ? cfg_ext_trig_sim_level : ext_trig_pin;
 wire ext_trig_deb_o, ext_trig_deb_p, ext_trig_deb_n;
 
 debounce #(
-  .CW (8),
+  .CW (16),
   .DI (1'b0)
 ) i_ext_trig_debounce (
   .clk  (clk),
@@ -298,13 +334,13 @@ debounce #(
 
 wire ext_trig_edge_pulse = cfg_ext_trig_edge_sel ? ext_trig_deb_n : ext_trig_deb_p;
 
-assign gpio_trig_o = cfg_ext_trig_condition_en ? ext_trig_edge_pulse : ext_trig_raw;
+assign gpio_trig_o = cfg_ext_trig_condition_en ? ext_trig_edge_pulse : ext_trig_deb_o;
 
 
 assign sto.TREADY = 1'b1;
 
 assign sti.TVALID = 1'b1;
-assign sti.TKEEP  = 1'b1;
+assign sti.TKEEP  = '1;  // both lanes (was 1'b1: lane N not kept)
 assign sti.TLAST  = 1'b0;
 
 assign s_axi_reg_rid = s_axi_reg_arid;
@@ -316,18 +352,64 @@ assign s_axi_reg_bid = s_axi_reg_wid;
 ////////////////////////////////////////////////////////////////////////////////
 wire                            reg_clk;
 wire                            reg_rst;
-wire [S_AXI_REG_ADDR_BITS-1:0]  reg_addr;
+wire [S_AXI_REG_ADDR_BITS-1:0]  reg_addr_axi;  // register bridge, s_axi_reg_aclk
 wire                            reg_en;
 wire [3:0]                      reg_we;
-wire                            reg_wr_we;
-wire [31:0]                     reg_wr_data;    
+wire                            reg_wr_we_axi;
+wire [31:0]                     reg_wr_data_axi;
 reg  [31:0]                     reg_rd_data;
 
 `ifdef SIMULATION
-  assign reg_wr_we = reg_en & (reg_we == 4'h1);
+  assign reg_wr_we_axi = reg_en & (reg_we == 4'h1);
 `else
-  assign reg_wr_we = reg_en & (reg_we == 4'hF);
+  assign reg_wr_we_axi = reg_en & (reg_we == 4'hF);
 `endif
+
+// The bridge runs on the register clock (50 MHz FCLK), the registers on the ADC clock.
+// Sampling the bridge directly sometimes decoded a write with the address of the previous
+// one (0x8C after 0x88 gave a false trigger event). A write goes into one of 4 slots and
+// flips the slot's toggle; the ADC clock domain applies the slots in order once the toggle
+// has crossed. The bridge writes at most once per register clock, so a slot is reused 4
+// writes (80 ns) later, long after the 2-3 ADC clocks of the crossing.
+reg  [S_AXI_REG_ADDR_BITS-1:0]  slot_addr [0:3];
+reg  [31:0]                     slot_data [0:3];
+reg  [3:0]                      slot_tgl;
+reg  [1:0]                      slot_wr;
+(* ASYNC_REG = "TRUE" *) reg [3:0] slot_tgl_s1, slot_tgl_s2;
+reg  [3:0]                      slot_seen;
+reg  [1:0]                      slot_rd;
+
+always @(posedge s_axi_reg_aclk)
+if (~axi_reg_rstn) begin
+  slot_tgl <= 4'h0;
+  slot_wr  <= 2'd0;
+end else if (reg_wr_we_axi) begin
+  slot_addr[slot_wr] <= reg_addr_axi;
+  slot_data[slot_wr] <= reg_wr_data_axi;
+  slot_tgl[slot_wr]  <= ~slot_tgl[slot_wr];
+  slot_wr            <= slot_wr + 2'd1;
+end
+
+// the write in the ADC clock domain: one clock, address and data stable
+reg                             reg_wr_we;
+reg  [S_AXI_REG_ADDR_BITS-1:0]  reg_addr;
+reg  [31:0]                     reg_wr_data;
+
+always @(posedge clk) begin
+  slot_tgl_s1 <= slot_tgl;
+  slot_tgl_s2 <= slot_tgl_s1;
+  reg_wr_we   <= 1'b0;
+  if (~rstn_r) begin
+    slot_seen <= 4'h0;
+    slot_rd   <= 2'd0;
+  end else if (slot_tgl_s2[slot_rd] != slot_seen[slot_rd]) begin
+    reg_wr_we          <= 1'b1;
+    reg_addr           <= slot_addr[slot_rd];
+    reg_wr_data        <= slot_data[slot_rd];
+    slot_seen[slot_rd] <= slot_tgl_s2[slot_rd];
+    slot_rd            <= slot_rd + 2'd1;
+  end
+end
 
 
 ////////////////////////////////////////////////////////////
@@ -361,8 +443,8 @@ reg_ctrl U_reg_ctrl(
   .bram_clk_a     (reg_clk),       
   .bram_en_a      (reg_en),         
   .bram_we_a      (reg_we),         
-  .bram_addr_a    (reg_addr),     
-  .bram_wrdata_a  (reg_wr_data), 
+  .bram_addr_a    (reg_addr_axi),
+  .bram_wrdata_a  (reg_wr_data_axi),
   .bram_rddata_a  (reg_rd_data));  
   
 // write access
@@ -393,10 +475,16 @@ if (~rstn_r) begin
   cfg_ext_trig_condition_en <= 1'b0;
   cfg_ext_trig_edge_sel     <= 1'b0;
   cfg_ext_trig_debounce_en  <= 1'b0;
-  cfg_ext_trig_debounce_len <= 8'h0;
+  cfg_ext_trig_debounce_len <= 16'h0;
+  cfg_ext_trig_sim_en       <= 1'b0;
+  cfg_trig_mode             <= 2'b0;
+  cfg_trig_blocks           <= 16'h0;
+  cfg_ext_trig_sim_level    <= 1'b0;
+  cfg_ext_trig_dio0_dis     <= 1'b0;
 
-  dir_p   <= 'h0;
-  dir_n   <= 'h0;
+  // 1 is high impedance: after the load no line is driven
+  dir_p   <= '1;
+  dir_n   <= '1;
 
   event_sel     <= 'h0;
   trig_sel      <= 'h0;
@@ -421,10 +509,10 @@ end else begin
     if (reg_addr[8-1:0]=='h14)   cfg_pst <= reg_wr_data[CW-1:0];
 
     // trigger detection
-    if (reg_addr[8-1:0]=='h40)   cfg_cmp_msk <= reg_wr_data;
-    if (reg_addr[8-1:0]=='h44)   cfg_cmp_val <= reg_wr_data;
-    if (reg_addr[8-1:0]=='h48)   cfg_edg_pos <= reg_wr_data;
-    if (reg_addr[8-1:0]=='h4C)   cfg_edg_neg <= reg_wr_data;
+    if (reg_addr[8-1:0]=='h40)   cfg_cmp_msk <= reg_wr_data[15:0];
+    if (reg_addr[8-1:0]=='h44)   cfg_cmp_val <= reg_wr_data[15:0];
+    if (reg_addr[8-1:0]=='h48)   cfg_edg_pos <= reg_wr_data[15:0];
+    if (reg_addr[8-1:0]=='h4C)   cfg_edg_neg <= reg_wr_data[15:0];
 
     // decimation
     if (reg_addr[8-1:0]=='h50)   cfg_dec <= reg_wr_data[DCW-1:0];
@@ -433,14 +521,21 @@ end else begin
     if (reg_addr[8-1:0]=='h54)   cfg_rle <= reg_wr_data[0];
 
     // bitwise input polarity
-    if (reg_addr[8-1:0]=='h60)   cfg_pol <= reg_wr_data;
+    if (reg_addr[8-1:0]=='h60)   cfg_pol <= reg_wr_data[15:0];
+
+    // trigger mode
+    if (reg_addr[8-1:0]=='h08)   cfg_trig_mode <= reg_wr_data[1:0];
+    if (reg_addr[8-1:0]=='h0C)   cfg_trig_blocks <= reg_wr_data[15:0];
 
     // external trigger control
     if (reg_addr[8-1:0]=='h68) begin
       cfg_ext_trig_condition_en <= reg_wr_data[0];
       cfg_ext_trig_edge_sel     <= reg_wr_data[1];
       cfg_ext_trig_debounce_en  <= reg_wr_data[2];
-      cfg_ext_trig_debounce_len <= reg_wr_data[15:8];
+      cfg_ext_trig_sim_en       <= reg_wr_data[4];
+      cfg_ext_trig_sim_level    <= reg_wr_data[5];
+      cfg_ext_trig_dio0_dis     <= reg_wr_data[6];
+      cfg_ext_trig_debounce_len <= reg_wr_data[31:16];
     end
 
     // GPIO direction
@@ -470,10 +565,12 @@ end
 // read access
 always_ff @(posedge clk)
 begin
-  casez (reg_addr[8-1:0])
+  casez (reg_addr_axi[8-1:0])  // the bridge holds the address while it reads
     // acquire regset
     'h00 : reg_rd_data <= {{32-  4{1'b0}},~sts_acq, sts_acq, sts_trg, 1'b0};
     'h04 : reg_rd_data <= {{32-  2{1'b0}}, cfg_aut, cfg_con};
+    'h08 : reg_rd_data <= {{32- 10{1'b0}}, sts_out_armed, sts_in_armed, {6{1'b0}}, cfg_trig_mode};
+    'h0C : reg_rd_data <= {{32- 16{1'b0}}, cfg_trig_blocks};
     'h10 : reg_rd_data <=              32'(cfg_pre); // number of samples pre trigger
     'h14 : reg_rd_data <=              32'(cfg_pst); // number of samples post trigger
     'h18 : reg_rd_data <=              32'(sts_pre); // current number of pre trig samples
@@ -486,10 +583,10 @@ begin
     'h34 : reg_rd_data <=              32'(cts_stp >> 32);
 
     // trigger detection
-    'h40 : reg_rd_data <=                  cfg_cmp_msk;
-    'h44 : reg_rd_data <=                  cfg_cmp_val;
-    'h48 : reg_rd_data <=                  cfg_edg_pos;
-    'h4c : reg_rd_data <=                  cfg_edg_neg;
+    'h40 : reg_rd_data <= {{32- 16{1'b0}}, cfg_cmp_msk};
+    'h44 : reg_rd_data <= {{32- 16{1'b0}}, cfg_cmp_val};
+    'h48 : reg_rd_data <= {{32- 16{1'b0}}, cfg_edg_pos};
+    'h4c : reg_rd_data <= {{32- 16{1'b0}}, cfg_edg_neg};
 
     // decimation
     'h50 : reg_rd_data <= {{32-DCW{1'b0}}, cfg_dec};
@@ -502,10 +599,11 @@ begin
     'h5c : reg_rd_data <=              32'(sts_lst);
 
     // bitwise input polarity
-    'h60 : reg_rd_data <=                cfg_pol;
+    'h60 : reg_rd_data <= {{32- 16{1'b0}}, cfg_pol};
 
     // external trigger control
-    'h68 : reg_rd_data <= {{32-16{1'b0}}, cfg_ext_trig_debounce_len, {5{1'b0}}, cfg_ext_trig_debounce_en, cfg_ext_trig_edge_sel, cfg_ext_trig_condition_en};
+    'h68 : reg_rd_data <= {cfg_ext_trig_debounce_len, {9{1'b0}}, cfg_ext_trig_dio0_dis, cfg_ext_trig_sim_level, cfg_ext_trig_sim_en,
+                           1'b0, cfg_ext_trig_debounce_en, cfg_ext_trig_edge_sel, cfg_ext_trig_condition_en};
 
     // GPIO direction
     'h70 : reg_rd_data <=                  dir_p;
@@ -529,6 +627,18 @@ begin
     'hB8 : reg_rd_data <=                  gpio_in_wp;
     'hBC : reg_rd_data <=                  gpio_out_rp;
     'hC0 : reg_rd_data <=                  cfg_dma_step;
+    // input DMA: {awlen, intr, fifo_dis, buffer select, ovr2, ovr1, full2, full1,
+    //             awready, wready, awvalid, wvalid, state}
+    'hC4 : reg_rd_data <=                  in_dma_diags;
+    'hC8 : reg_rd_data <=                  {axi_aw_cnt, axi_b_cnt};
+    'hCC : reg_rd_data <=                  axi_w_cnt;
+    'hD0 : reg_rd_data <=                  {axi_ar_cnt, axi_rlast_cnt};
+    'hD4 : reg_rd_data <=                  axi_r_cnt;
+    'hD8 : reg_rd_data <=                  sts_in_trig_count;
+    'hE0 : reg_rd_data <=                  in_buf1_lost[31: 0];
+    'hE4 : reg_rd_data <=                  in_buf1_lost[63:32];
+    'hE8 : reg_rd_data <=                  in_buf2_lost[31: 0];
+    'hEC : reg_rd_data <=                  in_buf2_lost[63:32];
 
     default : reg_rd_data <= '0;
   endcase
@@ -603,6 +713,14 @@ gpio_in_top #(
   .buf1_ms_cnt      (buf1_ms_cnt),
   .buf2_ms_cnt      (buf2_ms_cnt),
   .gpio_wp          (gpio_in_wp),
+  .dma_diags        (in_dma_diags),
+  .cfg_trig_mode    (cfg_trig_mode[0]),
+  .cfg_trig_blocks  (cfg_trig_blocks),
+  .trig_i           (ctl_trg),
+  .sts_armed        (sts_in_armed),
+  .sts_trig_taken   (sts_in_trig_taken),
+  .buf1_lost        (in_buf1_lost),
+  .buf2_lost        (in_buf2_lost),
 
   // AXI
   .m_axi_gpio_awaddr     (m_axi_gpio_awaddr), 
@@ -646,6 +764,9 @@ gpio_out_top #(
   // processing settings
   .cfg_pol          (cfg_pol),
   .cfg_rle          (cfg_rle),
+  .cfg_trig_mode    (cfg_trig_mode[1]),
+  .trig_i           (ctl_trg),
+  .sts_armed        (sts_out_armed),
 
   // DMA stuff
   .reg_wr_data      (reg_wr_data),       
@@ -662,7 +783,7 @@ gpio_out_top #(
   .gpio_buf2_adr    (cfg_buf2_adr_out),
   //.buf1_ms_cnt      (buf1_ms_cnt),
   //.buf2_ms_cnt      (buf2_ms_cnt),
-  .gpio_wp          (gpio_out_wp),
+  .gpio_wp          (gpio_out_rp),
 
   // AXI
   .m_axi_gpio_arid_o    (m_axi_gpio_arid), 
@@ -700,7 +821,33 @@ begin
 end
 
 assign ctl_trg = event_num_trig | |(trig_ip & trig_sel);
+
+// triggers taken by the input (series started or extended), cleared by the start event
+always @(posedge clk)
+  if (rstn_r == 0 || event_num_start)
+    sts_in_trig_count <= 32'd0;
+  else if (sts_in_trig_taken)
+    sts_in_trig_count <= sts_in_trig_count + 32'd1;
 assign intr = dma_intr;
+
+always @(posedge clk)
+begin
+  if (rstn_r == 0) begin
+    axi_aw_cnt    <= 'h0;
+    axi_b_cnt     <= 'h0;
+    axi_w_cnt     <= 'h0;
+    axi_ar_cnt    <= 'h0;
+    axi_rlast_cnt <= 'h0;
+    axi_r_cnt     <= 'h0;
+  end else begin
+    if (m_axi_gpio_awvalid & m_axi_gpio_awready) axi_aw_cnt <= axi_aw_cnt + 1;
+    if (m_axi_gpio_bvalid  & m_axi_gpio_bready)  axi_b_cnt  <= axi_b_cnt  + 1;
+    if (m_axi_gpio_wvalid  & m_axi_gpio_wready)  axi_w_cnt  <= axi_w_cnt  + 1;
+    if (m_axi_gpio_arvalid & m_axi_gpio_arready) axi_ar_cnt <= axi_ar_cnt + 1;
+    if (m_axi_gpio_rvalid  & m_axi_gpio_rready)  axi_r_cnt  <= axi_r_cnt  + 1;
+    if (m_axi_gpio_rvalid  & m_axi_gpio_rready & m_axi_gpio_rlast) axi_rlast_cnt <= axi_rlast_cnt + 1;
+  end
+end
 
 ////////////////////////////////////////////////////////////
 // Name : 
@@ -714,7 +861,7 @@ begin
     la_event_op <= 'h0;
   end else begin
     if (event_val) begin
-      la_event_op <= cfg_event_sts;   
+      la_event_op <= reg_wr_data[3:0];  // cfg_event_sts takes the value on the same clock
     end else begin
       la_event_op <= 'h0;
     end

@@ -31,101 +31,38 @@ module rle_rev #(
 );
 
 ////////////////////////////////////////////////////////////////////////////////
-// local variables
+// A word {count, value} is played for count+1 clocks (count 0: one clock), the
+// format the input RLE encoder writes. Without RLE every word is played for one
+// clock. The next word is taken on the last clock of the current one; when none
+// is ready the output drops TVALID (the GPIO outputs keep the last value).
 ////////////////////////////////////////////////////////////////////////////////
 
-// old values
-axi4_stream_if #(.DN (1), .DT (DTI)) old (.ACLK (sti.ACLK), .ARESETn (sti.ARESETn));
+logic [CW-1:0] cnt;   // clocks played of the current word
+logic [CW-1:0] len;   // count of the current word
+wire           last = ~cfg_ena | (cnt == len);
 
-// counter
-logic [CW-1:0] cnt;
-logic [CW-1:0] nxt;
-logic          endtr;
-wire  [CW-1:0] rle_val = sti.TDATA[0][CW+BW-1:BW];
- 
-// new compressed value
-logic trn;
+assign sti.TREADY = ~sto.TVALID | (sto.TREADY & last);
+assign new_read   = sti.TREADY;
 
-assign new_read = (cnt==rle_val-1); // when all RLE encoded values are sent.
-
-////////////////////////////////////////////////////////////////////////////////
-// store previous value
-////////////////////////////////////////////////////////////////////////////////
-
-assign sti.TREADY = old.TREADY | ~old.TVALID;
+always_ff @(posedge sti.ACLK)
+if (~sti.ARESETn | ctl_rst) begin
+  sto.TVALID <= 1'b0;
+  cnt        <= '0;
+  len        <= '0;
+end else if (sti.TREADY) begin
+  sto.TVALID <= sti.TVALID;
+  cnt        <= '0;
+  if (sti.TVALID)
+    len <= sti.TDATA[0][CW+BW-1:BW];
+end else if (sto.TREADY) begin
+  cnt <= cnt + 1'b1;
+end
 
 always_ff @(posedge sti.ACLK)
 if (sti.transf) begin
-  old.TDATA[0]  <= sti.TDATA[0];
-  old.TKEEP  <= sti.TKEEP;
-end
-
-always_ff @(posedge sti.ACLK)
-if (~sti.ARESETn) begin
-  old.TLAST  <= 1'b1;
-end else begin
-  if (ctl_rst) begin
-    old.TLAST  <= 1'b1;
-  end else if (sti.transf) begin
-    old.TLAST  <= sti.TLAST;
-  end
-end
-
-always_ff @(posedge sti.ACLK)
-if (~sti.ARESETn) begin
-  old.TVALID <= 1'b0;
-end else begin
-  if (ctl_rst) begin
-    old.TVALID <= 1'b0;
-  end else if (sti.TREADY & trn) begin
-    old.TVALID <= sti.TVALID;
-  end
-end
-
-////////////////////////////////////////////////////////////////////////////////
-// counter
-////////////////////////////////////////////////////////////////////////////////
-
-assign nxt = cnt + 1;
-assign endtr = (cnt==rle_val) & sti.TVALID; //modified for custom RLE decoding
-
-
-always_ff @(posedge sti.ACLK)
-if (~sti.ARESETn) begin
-  cnt <= '0;
-end else begin
-  if (ctl_rst) begin
-    cnt <= '0;
-  end else if (sti.transf) begin
-    cnt <= trn ? 'h0 : nxt;
-  end
-end
-
-// transfer due to (bypass) or (all samples were sent or end of stream)
-assign trn = ~cfg_ena | (endtr | old.TLAST);
-
-////////////////////////////////////////////////////////////////////////////////
-// compression
-////////////////////////////////////////////////////////////////////////////////
-
-assign old.TREADY = (sto.TREADY | ~sto.TVALID);
-
-always_ff @(posedge sti.ACLK)
-if (~sti.ARESETn) begin
-  sto.TVALID <= 1'b0;
-end else begin
-  if (ctl_rst) begin
-    sto.TVALID <= 1'b0;
-  end else if (old.TREADY) begin
-    sto.TVALID <= old.TVALID & trn;
-  end
-end
-
-always_ff @(posedge sti.ACLK)
-if (old.transf) begin
-  sto.TLAST <= old.TLAST;
-  sto.TKEEP <= '1;
-  sto.TDATA[0] <= old.TDATA[0][BW-1:0];
+  sto.TLAST    <= sti.TLAST;
+  sto.TKEEP    <= '1;
+  sto.TDATA[0] <= sti.TDATA[0][BW-1:0];
 end
 
 endmodule: rle_rev

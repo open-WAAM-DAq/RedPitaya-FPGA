@@ -20,6 +20,8 @@ module osc_acquire
   input  wire                       ctl_stop,
   input  wire                       ctl_trig,
   input  wire                       cfg_trigger_mode,
+  input  wire [16-1:0]              cfg_trig_blocks,   // blocks per trigger, 0 - continuous
+  input  wire [CNT_BITS-1:0]        cfg_block_samples, // samples in one DMA buffer
   // Config
   input  wire                       cfg_mode, 
   input  wire [CNT_BITS-1:0]        cfg_trig_pre_samp, 
@@ -33,7 +35,9 @@ module osc_acquire
   output reg  [CNT_BITS-1:0]        sts_trig_post_cnt,
   output reg                        sts_trig_post_overflow,
   output wire                       sts_armed,
-  output wire                       accepted_trigger
+  output wire                       accepted_trigger,
+  output wire                       sts_drop,          // a sample is not written while waiting
+  output wire                       trig_taken         // a trigger started or extended the writing
 );
 
 ////////////////////////////////////////////////////////////
@@ -66,7 +70,85 @@ assign sts_armed      = cfg_trigger_mode &&
                         (cfg_mode == STREAM_MODE) &&
                         (state_cs == PRE_SAMP_WAIT_TRIG) &&
                         !ctl_stop;
-assign accepted_trigger = sts_armed && ctl_trig;
+
+// Only a rising edge of the trigger seen while armed is accepted, as in the DAC playback:
+// a trigger that is already high when the core arms waits for its next edge.
+reg ctl_trig_d1;
+always @(posedge clk)
+begin
+  if (rst_n == 0)
+    ctl_trig_d1 <= 1'b0;
+  else
+    ctl_trig_d1 <= ctl_trig;
+end
+
+// late_trig: a trigger on the last sample of a series, taken by the wait that follows
+// (inside a series a trigger is taken a clock late, see the block mode)
+wire late_trig;
+assign accepted_trigger = sts_armed && ((ctl_trig && !ctl_trig_d1) || late_trig);
+
+////////////////////////////////////////////////////////////
+// Block mode (trigger mode with cfg_trig_blocks > 0): a trigger writes the
+// current block and the blocks after it up to cfg_trig_blocks in total, then
+// the core waits for the next trigger. A trigger inside a series sets the
+// blocks after the current one to cfg_trig_blocks again (trigger in block k:
+// the series ends with block k + N). The samples not written while waiting
+// are flagged on sts_drop, so the DMA can count the gap between two series.
+////////////////////////////////////////////////////////////
+// Timing at 250 MHz: the configuration is static while the core runs, the derived values
+// are registered; the position in the block counts down to 0; the counters wait loaded while
+// no series is written, and a trigger inside a series is taken a clock late, so the trigger
+// path does not reach the counters.
+reg                 blocks_mode;
+reg  [CNT_BITS-1:0] block_last;  // cfg_block_samples - 1
+reg  [16-1:0]       blocks_m1;   // cfg_trig_blocks - 1
+reg                 blocks_one;  // cfg_trig_blocks == 1
+always @(posedge clk)
+begin
+  blocks_mode <= cfg_trigger_mode && (cfg_trig_blocks != 0);
+  block_last  <= cfg_block_samples - 1;
+  blocks_m1   <= cfg_trig_blocks - 1;
+  blocks_one  <= (cfg_trig_blocks == 1);
+end
+
+reg                 trig_edge_r, strm_r;
+always @(posedge clk)
+begin
+  trig_edge_r <= ctl_trig && !ctl_trig_d1;
+  strm_r      <= (state_cs == STRM_SAMP);
+end
+
+wire                sample_wr   = sts_acquire && s_axis_tvalid;
+reg  [CNT_BITS-1:0] blk_rem;   // samples of the current block still to write, minus one
+reg  [16-1:0]       blk_left;  // blocks of the series after the current one
+reg                 blk_none;  // blk_left == 0
+wire                blk_end     = sample_wr && (blk_rem == 0);
+wire                retrig      = blocks_mode && (state_cs == STRM_SAMP) && strm_r && trig_edge_r;
+wire                series_end  = blocks_mode && blk_end && blk_none && !retrig;
+assign              late_trig   = blocks_mode && strm_r && trig_edge_r;
+
+always @(posedge clk)
+begin
+  if ((rst_n == 0) || (state_cs != STRM_SAMP)) begin
+    blk_rem  <= block_last;
+    blk_left <= blocks_m1;
+    blk_none <= blocks_one;
+  end else begin
+    if (sample_wr)
+      blk_rem <= blk_end ? block_last : blk_rem - 1;
+    if (retrig) begin
+      blk_left <= blk_end ? blocks_m1 : cfg_trig_blocks;
+      blk_none <= blk_end && blocks_one;
+    end else if (blk_end && !blk_none) begin
+      blk_left <= blk_left - 1;
+      blk_none <= (blk_left == 1);
+    end
+  end
+end
+
+assign trig_taken = accepted_trigger || retrig;
+
+assign sts_drop = s_axis_tvalid && !sts_acquire && (cfg_mode == STREAM_MODE) && (state_cs == PRE_SAMP_WAIT_TRIG);
 
 ////////////////////////////////////////////////////////////
 // Name : State machine seq logic
@@ -137,15 +219,17 @@ begin
     end
     
     // PRE_SAMP_WAIT_TRIG - Wait until we get a trigger
+    // In streaming the wait leaves on an accepted trigger edge, or at once when the trigger
+    // mode is cleared while waiting (the DAC playback does the same).
     PRE_SAMP_WAIT_TRIG: begin
-      if (ctl_trig == 1) begin
-        if (cfg_mode == STREAM_MODE) begin
-          state_ns = STRM_SAMP;  
-        end else begin
-          state_ns = POST_SAMP_FILL;
-        end  
+      if (cfg_mode == STREAM_MODE) begin
+        if (accepted_trigger || !cfg_trigger_mode) begin
+          state_ns = STRM_SAMP;
+        end
+      end else if (ctl_trig == 1) begin
+        state_ns = POST_SAMP_FILL;
       end
-    end    
+    end
     
     // POST_SAMP_WAIT_TRIG - Wait until we get a trigger
     POST_SAMP_WAIT_TRIG: begin
@@ -162,10 +246,13 @@ begin
     end    
     
     // STRM_SAMP - Streaming mode, data is continuously sent to the DMA
+    // (in the block mode until the series ends, then wait for a trigger again)
     STRM_SAMP: begin
       if (ctl_stop == 1) begin
-        state_ns = IDLE;   
-      end   
+        state_ns = IDLE;
+      end else if (series_end) begin
+        state_ns = PRE_SAMP_WAIT_TRIG;
+      end
     end
   endcase
 end
@@ -200,7 +287,7 @@ begin
   if (rst_n == 0) begin
     sts_acquire <= 0;
   end else begin
-    if (sts_last == 1) begin
+    if ((sts_last == 1) || series_end) begin
       sts_acquire <= 0;
     end else begin
       // Start acquire if the pre buffer is enabled,
@@ -210,6 +297,7 @@ begin
            (cfg_trig_pre_samp != 0)) ||
           ((state_cs == POST_SAMP_WAIT_TRIG) && (ctl_trig == 1)) ||
           ((ctl_start == 1) && (cfg_mode == STREAM_MODE) && !cfg_trigger_mode) ||
+          ((state_cs == PRE_SAMP_WAIT_TRIG) && (cfg_mode == STREAM_MODE) && !cfg_trigger_mode) ||
           accepted_trigger) begin
         sts_acquire <= 1;
       end    

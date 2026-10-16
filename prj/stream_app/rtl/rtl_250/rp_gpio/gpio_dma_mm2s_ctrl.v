@@ -27,6 +27,7 @@ module gpio_dma_mm2s_ctrl
 
   input  wire                       data_valid, 
   output reg                        fifo_rst,
+  output wire                       idle_o,    // stopped: the FIFO and the output are held in reset
   input  wire                       fifo_full,
   input  wire                       fifo_re,
 
@@ -99,13 +100,15 @@ wire                      dat_ctrl_req_we;
 reg                       buf1_rdy;
 reg                       buf2_rdy;
 reg                       data_valid_reg;
-reg  [3:0]                fifo_rst_cnt;
+reg  [5:0]                fifo_rst_cnt;
 reg                       next_buf_nfull;
 reg                       fifo_rst_cntdwn;
 reg                       transf_end, transf_end_r;
 wire                      m_axi_rready;
 
 wire [7:0] arlen = AXI_BURST_LEN;
+
+assign idle_o = (state_cs == IDLE);
 
 reg [15:0] full_cnt;
 
@@ -176,6 +179,11 @@ begin
       end
 
       WAIT_BUF_FULL: begin
+          full_cnt <= 'h0;
+      end
+
+      // a stop while waiting for the FIFO must not carry the wait into the next start
+      IDLE, FIFO_RST: begin
           full_cnt <= 'h0;
       end
     endcase
@@ -307,7 +315,7 @@ begin
     FIFO_RST: begin
       if (reg_ctrl[CTRL_RESET])
         state_ns = IDLE;
-      else if (fifo_rst_cnt == 15) begin
+      else if (fifo_rst_cnt == 63) begin
         state_ns = WAIT_DATA_RDY;
       end
     end
@@ -430,7 +438,7 @@ begin
     end
 
     FIFO_RST: begin
-      if (fifo_rst_cnt == 15) begin
+      if (fifo_rst_cnt == 63) begin
         fifo_rst_cntdwn <= 1'b0;
       end
       if (reg_ctrl[CTRL_RESET])

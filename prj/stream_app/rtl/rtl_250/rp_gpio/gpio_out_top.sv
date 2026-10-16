@@ -18,8 +18,11 @@ module gpio_out_top   #(
   // control
 
   input  reg          ctl_rst,  // synchronous reset
-  input  DT           cfg_pol,  // comparator mask
+  input  wire [16-1:0] cfg_pol,  // input polarity (not used by the output)
   input  reg          cfg_rle,  // enable RLE
+  input  wire         cfg_trig_mode,  // play from the next trigger edge once the FIFO is full
+  input  wire         trig_i,
+  output wire         sts_armed,
 
   input  wire [S_AXI_REG_ADDR_BITS-1:0]   reg_addr,
   input  wire [31:0]                reg_wr_data,
@@ -61,6 +64,8 @@ axi4_stream_if #(.DN (1), .DT (reg [CW+ALL_GPIO-1:0])) sti1  (.ACLK (clk), .ARES
 
 
 wire [32-1:0] gpio_data_o;
+wire [M_AXI_GPIO_ADDR_BITS-1:0] gpio_rp;  // read pointer of the output DMA, register 0xBC
+assign gpio_wp = gpio_rp;
 wire          gpio_rvalid;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -114,6 +119,9 @@ gpio_dma_mm2s #(
   .dac_rdata_o      (gpio_data_o),
   .dac_rvalid_o     (gpio_rvalid),
   .gpio_rready_i    (new_read),
+  .trigger_mode_i   (cfg_trig_mode),
+  .trigger_i        (trig_i),
+  .armed_o          (sts_armed),
   
   .m_axi_arid_o   (m_axi_gpio_arid_o), 
   .m_axi_araddr_o    (m_axi_gpio_araddr_o),  

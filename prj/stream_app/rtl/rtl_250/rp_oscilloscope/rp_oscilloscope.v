@@ -244,6 +244,7 @@ wire [S_AXIS_DATA_BITS-1:0] cfg_trig_low_level;
 wire [S_AXIS_DATA_BITS-1:0] cfg_trig_high_level;
 wire                        cfg_trig_edge;
 wire                        cfg_trigger_mode;
+wire [              16-1:0] cfg_trig_blocks;
 wire                        trig_mod_op;
 
 wire                        cfg_avg_en; 
@@ -284,6 +285,8 @@ wire                        cfg_8bit_dat;
 wire                        cfg_legacy_calib;
 
 wire [16-1:0]               cfg_calib_offset_ch1;
+wire [4*64-1:0]             buf1_lost;
+wire [4*64-1:0]             buf2_lost;
 wire [16-1:0]               cfg_calib_gain_ch1;
 wire [16-1:0]               cfg_calib_offset_ch2;
 wire [16-1:0]               cfg_calib_gain_ch2;
@@ -321,6 +324,17 @@ wire [4*32-1:0]             diag2;
 wire [4*32-1:0]             diag3;
 wire [4*32-1:0]             diag4;
 */
+
+// the triggers taken by CH1 (all channels take the same ones)
+wire sts_trig_taken = cfg_trigger_mode & trig_out1;
+
+genvar GL;
+generate
+  for (GL = NUM_CHANNELS; GL < 4; GL = GL + 1) begin : no_lost
+    assign buf1_lost[(GL+1)*64-1:GL*64] = 64'd0;
+    assign buf2_lost[(GL+1)*64-1:GL*64] = 64'd0;
+  end
+endgenerate
 
 wire [S_AXIS_DATA_BITS-1:0] calib_tdata;   
 wire [S_AXIS_DATA_BITS-1:0] calib_datain;    
@@ -492,7 +506,9 @@ scope_cfg #(
   .cfg_trig_high_level_o    (cfg_trig_high_level),
   .cfg_trig_edge_o          (cfg_trig_edge),
   .cfg_trigger_mode_o       (cfg_trigger_mode),
+  .cfg_trig_blocks_o        (cfg_trig_blocks),
   .sts_armed_i              (sts_armed),
+  .sts_trig_taken_i         (sts_trig_taken),
 
   .cfg_dec_factor_o         (cfg_dec_factor),
   .cfg_dec_rshift_o         (cfg_dec_rshift),
@@ -557,6 +573,8 @@ scope_cfg #(
   .buf2_timestamp_ch1_i     (buf2_timestamp_ch1),
   .buf1_timestamp_ch2_i     (buf1_timestamp_ch2),
   .buf2_timestamp_ch2_i     (buf2_timestamp_ch2),
+  .buf1_lost_i              (buf1_lost),
+  .buf2_lost_i              (buf2_lost),
 
   .curr_wp_ch1_i            (curr_wp_ch1),
   .curr_wp_ch2_i            (curr_wp_ch2),
@@ -589,6 +607,7 @@ scope_cfg #(
   U_osc1(
   .clk_axi          (m_axi_osc1_aclk),   
   .clk_adc          (clk),   
+  .cfg_trig_blocks_i        (cfg_trig_blocks),
   .axi_rstn         (m_axi_osc1_aresetn), 
   .adc_rstn         (rst_n), 
   .s_axis_tdata     (s_axis_osc1_tdata), 
@@ -621,6 +640,8 @@ scope_cfg #(
   .cfg_hres_en_i            (cfg_hres_en),
   .cfg_loopback_i           ({cfg_loopback[8],1'b0,cfg_loopback[0]}),
   .cfg_8bit_dat_i           (cfg_8bit_dat),
+  .buf1_lost_o              (buf1_lost[1*64-1:0*64]),
+  .buf2_lost_o              (buf2_lost[1*64-1:0*64]),
   .cfg_legacy_calib_i       (cfg_legacy_calib),
   .cfg_calib_offset_i       (cfg_calib_offset_ch1),
   .cfg_calib_gain_i         (cfg_calib_gain_ch1),
@@ -715,6 +736,7 @@ osc_top #(
   .cfg_trig_high_level_i    (cfg_trig_high_level),
   .cfg_trig_edge_i          (cfg_trig_edge),
   .cfg_trigger_mode_i       (cfg_trigger_mode),
+  .cfg_trig_blocks_i        (cfg_trig_blocks),
   .sts_armed_o              (adc_armed_ch2),
 
   .cfg_dec_factor_i         (cfg_dec_factor),
@@ -746,6 +768,8 @@ osc_top #(
   .buf2_ms_cnt_o            (buf2_ms_cnt_ch2),
   .buf1_timestamp_o         (buf1_timestamp_ch2),
   .buf2_timestamp_o         (buf2_timestamp_ch2),
+  .buf1_lost_o              (buf1_lost[2*64-1:1*64]),
+  .buf2_lost_o              (buf2_lost[2*64-1:1*64]),
 
   .curr_wp_o                (curr_wp_ch2),
 

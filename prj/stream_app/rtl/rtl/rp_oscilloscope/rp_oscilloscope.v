@@ -220,6 +220,7 @@ wire [S_AXIS_DATA_BITS-1:0] cfg_trig_low_level;
 wire [S_AXIS_DATA_BITS-1:0] cfg_trig_high_level;
 wire                        cfg_trig_edge;
 wire                        cfg_trigger_mode;
+wire [              16-1:0] cfg_trig_blocks;
 wire                        trig_mod_op;
 
 wire                        cfg_avg_en; 
@@ -260,6 +261,8 @@ wire [4*32-1:0]             buf1_ms_cnt;
 wire [4*32-1:0]             buf2_ms_cnt;
 wire [4*64-1:0]             buf1_timestamp;
 wire [4*64-1:0]             buf2_timestamp;
+wire [4*64-1:0]             buf1_lost;
+wire [4*64-1:0]             buf2_lost;
 wire [4*32-1:0]             curr_wp;
 
 wire [ 4*4-1:0]             osc_event_op;
@@ -294,6 +297,16 @@ assign loopback_sel  = cfg_loopback[8-1:0];
 assign intr = |dma_intr;
 assign trig_out = |ser_trig;
 wire sts_armed = &adc_armed;
+// the triggers taken by CH1 (all channels take the same ones)
+wire sts_trig_taken = cfg_trigger_mode & ser_trig[0];
+
+genvar GL;
+generate
+  for (GL = NUM_CHANNELS; GL < 4; GL = GL + 1) begin : no_lost
+    assign buf1_lost[(GL+1)*64-1:GL*64] = 64'd0;
+    assign buf2_lost[(GL+1)*64-1:GL*64] = 64'd0;
+  end
+endgenerate
 
 always @(posedge m_axi_osc1_aclk)
 begin
@@ -463,7 +476,9 @@ scope_cfg #(
   .cfg_trig_high_level_o    (cfg_trig_high_level),
   .cfg_trig_edge_o          (cfg_trig_edge),
   .cfg_trigger_mode_o       (cfg_trigger_mode),
+  .cfg_trig_blocks_o        (cfg_trig_blocks),
   .sts_armed_i              (sts_armed),
+  .sts_trig_taken_i         (sts_trig_taken),
 
   .cfg_dec_factor_o         (cfg_dec_factor),
   .cfg_dec_rshift_o         (cfg_dec_rshift),
@@ -495,6 +510,8 @@ scope_cfg #(
   .buf2_ms_cnt_i            (buf2_ms_cnt),
   .buf1_timestamp_i         (buf1_timestamp),
   .buf2_timestamp_i         (buf2_timestamp),
+  .buf1_lost_i              (buf1_lost),
+  .buf2_lost_i              (buf2_lost),
   .curr_wp_i                (curr_wp),
 
 
@@ -560,6 +577,7 @@ osc_top #(
   .sts_trig_post_overflow_o (sts_trig_post_overflow[GV]),
   .cfg_trig_edge_i          (cfg_trig_edge),
   .cfg_trigger_mode_i       (cfg_trigger_mode),
+  .cfg_trig_blocks_i        (cfg_trig_blocks),
   .sts_armed_o              (adc_armed[GV]),
 
   .cfg_dec_factor_i         (cfg_dec_factor),
@@ -592,6 +610,8 @@ osc_top #(
   .buf2_ms_cnt_o            (buf2_ms_cnt[(GV+1)*32-1:GV*32]),
   .buf1_timestamp_o         (buf1_timestamp[(GV+1)*64-1:GV*64]),
   .buf2_timestamp_o         (buf2_timestamp[(GV+1)*64-1:GV*64]),
+  .buf1_lost_o              (buf1_lost[(GV+1)*64-1:GV*64]),
+  .buf2_lost_o              (buf2_lost[(GV+1)*64-1:GV*64]),
 
   .curr_wp_o                (curr_wp[(GV+1)*32-1:GV*32]),
   .diag1_o                  (diag1[(GV+1)*32-1:GV*32]),

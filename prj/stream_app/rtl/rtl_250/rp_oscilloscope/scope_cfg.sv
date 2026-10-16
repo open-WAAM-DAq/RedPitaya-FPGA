@@ -73,7 +73,9 @@ module scope_cfg
    output wire [S_AXIS_DATA_BITS-1:0]  cfg_trig_high_level_o   ,
    output wire                         cfg_trig_edge_o         ,
    output wire                         cfg_trigger_mode_o      ,
+   output wire [              16-1:0]  cfg_trig_blocks_o       ,
    input  wire                         sts_armed_i             ,
+   input  wire                         sts_trig_taken_i        ,
 
    output wire [    DEC_CNT_BITS-1:0]  cfg_dec_factor_o        ,
    output wire [  DEC_SHIFT_BITS-1:0]  cfg_dec_rshift_o        ,
@@ -109,6 +111,8 @@ module scope_cfg
    output wire [              64-1:0]  cfg_timestamp_init_o    ,
    output wire                         cfg_timestamp_init_we_o ,
    input  wire [              32-1:0]  cfg_dma_sts_i           ,
+   input  wire [            4*64-1:0]  buf1_lost_i         ,
+   input  wire [            4*64-1:0]  buf2_lost_i         ,
    input  wire [              64-1:0]  curr_timestamp_i        ,
 
 
@@ -172,6 +176,7 @@ reg  [32-1: 0] reg_rdat_adc  ;
 localparam EVENT_STS_ADDR           = 12'h0;   // Event status address 
 localparam EVENT_SEL_ADDR           = 12'h4;   // Event select address
 localparam TRIG_MASK_ADDR           = 12'h8;   // Trigger mask address
+localparam TRIG_BLOCKS_ADDR         = 12'hC;   // Blocks per trigger in the trigger mode, 0 - continuous
 localparam TRIG_PRE_SAMP_ADDR       = 12'h10;  // Trigger pre samples address
 localparam TRIG_POST_SAMP_ADDR      = 12'h14;  // Trigger post samples address
 localparam TRIG_PRE_CNT_ADDR        = 12'h18;  // Trigger pre count address
@@ -253,6 +258,24 @@ localparam BUF1_TIMESTAMP_LO_CH1    = 12'h208;   // Buffer 1 timestamp channel 1
 localparam BUF1_TIMESTAMP_HI_CH1    = 12'h20C;   // Buffer 1 timestamp channel 1 high
 localparam BUF2_TIMESTAMP_LO_CH1    = 12'h210;   // Buffer 2 timestamp channel 1 low
 localparam BUF2_TIMESTAMP_HI_CH1    = 12'h214;   // Buffer 2 timestamp channel 1 high
+localparam TRIG_COUNT_ADDR          = 12'h218;   // Triggers taken since the start (trigger mode)
+localparam BUF1_LOST_LO_CH1       = 12'h220;  // Samples lost before buffer 1, CH1, low
+localparam BUF1_LOST_HI_CH1       = 12'h224;  // Samples lost before buffer 1, CH1, high
+localparam BUF2_LOST_LO_CH1       = 12'h228;  // Samples lost before buffer 2, CH1, low
+localparam BUF2_LOST_HI_CH1       = 12'h22C;  // Samples lost before buffer 2, CH1, high
+localparam BUF1_LOST_LO_CH2       = 12'h230;  // Samples lost before buffer 1, CH2, low
+localparam BUF1_LOST_HI_CH2       = 12'h234;  // Samples lost before buffer 1, CH2, high
+localparam BUF2_LOST_LO_CH2       = 12'h238;  // Samples lost before buffer 2, CH2, low
+localparam BUF2_LOST_HI_CH2       = 12'h23C;  // Samples lost before buffer 2, CH2, high
+localparam BUF1_LOST_LO_CH3       = 12'h240;  // Samples lost before buffer 1, CH3, low
+localparam BUF1_LOST_HI_CH3       = 12'h244;  // Samples lost before buffer 1, CH3, high
+localparam BUF2_LOST_LO_CH3       = 12'h248;  // Samples lost before buffer 2, CH3, low
+localparam BUF2_LOST_HI_CH3       = 12'h24C;  // Samples lost before buffer 2, CH3, high
+localparam BUF1_LOST_LO_CH4       = 12'h250;  // Samples lost before buffer 1, CH4, low
+localparam BUF1_LOST_HI_CH4       = 12'h254;  // Samples lost before buffer 1, CH4, high
+localparam BUF2_LOST_LO_CH4       = 12'h258;  // Samples lost before buffer 2, CH4, low
+localparam BUF2_LOST_HI_CH4       = 12'h25C;  // Samples lost before buffer 2, CH4, high
+
 localparam CLKSEL_REG               = 16'h1000;  // FPGA mode
 
 
@@ -266,6 +289,8 @@ reg  [S_AXIS_DATA_BITS-1:0] cfg_trig_low_level;
 reg  [S_AXIS_DATA_BITS-1:0] cfg_trig_high_level;
 reg                         cfg_trig_edge;
 reg                         cfg_trigger_mode;
+reg  [              16-1:0] cfg_trig_blocks;
+reg  [              32-1:0] sts_trig_count;
 
 reg                         cfg_avg_en; 
 reg                         cfg_hres_en;
@@ -355,6 +380,22 @@ assign axi_clk_regs =  (bus.addr[12-1:0] == DMA_CTRL_ADDR          ||
                         bus.addr[12-1:0] == BUF1_TIMESTAMP_HI_CH1   ||
                         bus.addr[12-1:0] == BUF2_TIMESTAMP_LO_CH1   ||
                         bus.addr[12-1:0] == BUF2_TIMESTAMP_HI_CH1   ||
+                        bus.addr[12-1:0] == BUF1_LOST_LO_CH1       ||
+                        bus.addr[12-1:0] == BUF1_LOST_HI_CH1       ||
+                        bus.addr[12-1:0] == BUF2_LOST_LO_CH1       ||
+                        bus.addr[12-1:0] == BUF2_LOST_HI_CH1       ||
+                        bus.addr[12-1:0] == BUF1_LOST_LO_CH2       ||
+                        bus.addr[12-1:0] == BUF1_LOST_HI_CH2       ||
+                        bus.addr[12-1:0] == BUF2_LOST_LO_CH2       ||
+                        bus.addr[12-1:0] == BUF2_LOST_HI_CH2       ||
+                        bus.addr[12-1:0] == BUF1_LOST_LO_CH3       ||
+                        bus.addr[12-1:0] == BUF1_LOST_HI_CH3       ||
+                        bus.addr[12-1:0] == BUF2_LOST_LO_CH3       ||
+                        bus.addr[12-1:0] == BUF2_LOST_HI_CH3       ||
+                        bus.addr[12-1:0] == BUF1_LOST_LO_CH4       ||
+                        bus.addr[12-1:0] == BUF1_LOST_HI_CH4       ||
+                        bus.addr[12-1:0] == BUF2_LOST_LO_CH4       ||
+                        bus.addr[12-1:0] == BUF2_LOST_HI_CH4       ||
                         bus.addr[12-1:0] == BUF1_LOST_SAMP_CNT_CH1 ||
                         bus.addr[12-1:0] == BUF2_LOST_SAMP_CNT_CH1 ||
                         bus.addr[12-1:0] == BUF1_LOST_SAMP_CNT_CH2 ||
@@ -462,6 +503,7 @@ begin
       cfg_trig_high_level     <=   'h0;
       cfg_trig_edge           <=  1'b0;
       cfg_trigger_mode        <=  1'b0;
+      cfg_trig_blocks         <= 16'h0;
       cfg_dec_factor          <=   'h0;
       cfg_dec_rshift          <=   'h0;
       cfg_avg_en              <=  1'b0;
@@ -501,6 +543,7 @@ begin
       if (reg_write_adc && (reg_ofs_adc[12-1:0]==TRIG_HIGH_LEVEL_ADDR)  )  cfg_trig_high_level     <= reg_wdat_adc[S_AXIS_DATA_BITS-1:0];
       if (reg_write_adc && (reg_ofs_adc[12-1:0]==TRIG_EDGE_ADDR)        )  cfg_trig_edge           <= reg_wdat_adc[0];
       if (reg_write_adc && (reg_ofs_adc[12-1:0]==TRIG_MODE_ADDR)        )  cfg_trigger_mode        <= reg_wdat_adc[0];
+      if (reg_write_adc && (reg_ofs_adc[12-1:0]==TRIG_BLOCKS_ADDR)      )  cfg_trig_blocks         <= reg_wdat_adc[16-1:0];
       if (reg_write_adc && (reg_ofs_adc[12-1:0]==DEC_FACTOR_ADDR)       )  cfg_dec_factor          <= reg_wdat_adc[DEC_CNT_BITS-1:0];
       if (reg_write_adc && (reg_ofs_adc[12-1:0]==DEC_RSHIFT_ADDR)       )  cfg_dec_rshift          <= reg_wdat_adc[DEC_SHIFT_BITS-1:0];
       if (reg_write_adc && (reg_ofs_adc[12-1:0]==AVG_EN_ADDR)           )  cfg_avg_en              <= reg_wdat_adc[0];
@@ -562,6 +605,8 @@ always @ (*)
 begin
    casez(reg_ofs_adc[12-1:0])
       EVENT_STS_ADDR         : begin  reg_ack_adc = 1'b1;       reg_rdat_adc = {{32-4{1'b0}}                , cfg_event_sts_i};         end
+      TRIG_BLOCKS_ADDR       : begin  reg_ack_adc = 1'b1;       reg_rdat_adc = {{32-16{1'b0}}              , cfg_trig_blocks};          end
+      TRIG_COUNT_ADDR        : begin  reg_ack_adc = 1'b1;       reg_rdat_adc = sts_trig_count;                                         end
       EVENT_SEL_ADDR         : begin  reg_ack_adc = 1'b1;       reg_rdat_adc = {{32-3{1'b0}}                , cfg_event_sel};           end
       TRIG_MASK_ADDR         : begin  reg_ack_adc = 1'b1;       reg_rdat_adc = {{32-TRIG_SRC_NUM{1'b0}}     , cfg_trig_mask};           end
       TRIG_PRE_SAMP_ADDR     : begin  reg_ack_adc = 1'b1;       reg_rdat_adc = {{32-TRIG_CNT_BITS{1'b0}}    , cfg_trig_pre_samp};       end
@@ -709,6 +754,22 @@ begin
       BUF2_TIMESTAMP_HI_CH1  : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_timestamp_ch1_i[63:32]; end
       CURR_WP_CH1            : begin  reg_ack_axi = 1'b1; reg_rdat_axi = curr_wp_ch1_i;               end
       CURR_WP_CH2            : begin  reg_ack_axi = 1'b1; reg_rdat_axi = curr_wp_ch2_i;               end
+      BUF1_LOST_LO_CH1      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf1_lost_i[0*64+31 -: 32]; end
+      BUF1_LOST_HI_CH1      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf1_lost_i[0*64+63 -: 32]; end
+      BUF2_LOST_LO_CH1      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_lost_i[0*64+31 -: 32]; end
+      BUF2_LOST_HI_CH1      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_lost_i[0*64+63 -: 32]; end
+      BUF1_LOST_LO_CH2      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf1_lost_i[1*64+31 -: 32]; end
+      BUF1_LOST_HI_CH2      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf1_lost_i[1*64+63 -: 32]; end
+      BUF2_LOST_LO_CH2      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_lost_i[1*64+31 -: 32]; end
+      BUF2_LOST_HI_CH2      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_lost_i[1*64+63 -: 32]; end
+      BUF1_LOST_LO_CH3      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf1_lost_i[2*64+31 -: 32]; end
+      BUF1_LOST_HI_CH3      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf1_lost_i[2*64+63 -: 32]; end
+      BUF2_LOST_LO_CH3      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_lost_i[2*64+31 -: 32]; end
+      BUF2_LOST_HI_CH3      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_lost_i[2*64+63 -: 32]; end
+      BUF1_LOST_LO_CH4      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf1_lost_i[3*64+31 -: 32]; end
+      BUF1_LOST_HI_CH4      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf1_lost_i[3*64+63 -: 32]; end
+      BUF2_LOST_LO_CH4      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_lost_i[3*64+31 -: 32]; end
+      BUF2_LOST_HI_CH4      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_lost_i[3*64+63 -: 32]; end
 
 /*
       DMA_DST_ADDR1_CH1      : begin  reg_ack_axi = 1'b1; reg_rdat_axi = cfg_dma_dst_addr1[1*32-1:0*32]; end
@@ -731,6 +792,7 @@ begin
       BUF2_LOST_SAMP_CNT_CH3 : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_ms_cnt_i[3*32-1:2*32];  end
       BUF2_LOST_SAMP_CNT_CH4 : begin  reg_ack_axi = 1'b1; reg_rdat_axi = buf2_ms_cnt_i[4*32-1:3*32];  end
 
+
       CURR_WP_CH1            : begin  reg_ack_axi = 1'b1; reg_rdat_axi = curr_wp_i[1*32-1:0*32];      end
       CURR_WP_CH2            : begin  reg_ack_axi = 1'b1; reg_rdat_axi = curr_wp_i[2*32-1:1*32];      end
       CURR_WP_CH3            : begin  reg_ack_axi = 1'b1; reg_rdat_axi = curr_wp_i[3*32-1:2*32];      end
@@ -752,6 +814,16 @@ assign cfg_trig_low_level_o    = cfg_trig_low_level;
 assign cfg_trig_high_level_o   = cfg_trig_high_level;
 assign cfg_trig_edge_o         = cfg_trig_edge;
 assign cfg_trigger_mode_o      = cfg_trigger_mode;
+assign cfg_trig_blocks_o       = cfg_trig_blocks;
+
+// triggers taken (started or extended the writing) since the last start event
+always @(posedge clk_adc_i)
+begin
+   if ((adc_rstn_i == 1'b0) || cfg_event_op_start_o)
+      sts_trig_count <= 32'h0;
+   else if (sts_trig_taken_i)
+      sts_trig_count <= sts_trig_count + 32'h1;
+end
 
 assign cfg_dec_factor_o        = cfg_dec_factor;
 assign cfg_dec_rshift_o        = cfg_dec_rshift;

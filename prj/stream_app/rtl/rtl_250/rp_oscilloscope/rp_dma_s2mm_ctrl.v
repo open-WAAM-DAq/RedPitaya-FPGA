@@ -42,6 +42,12 @@ module rp_dma_s2mm_ctrl
   output wire [31:0]                buf2_ms_cnt,
   output reg  [63:0]                buf1_timestamp,
   output reg  [63:0]                buf2_timestamp,
+  input  wire [15:0]                lost_add,       // samples lost in the stream clock domain, handed over
+  input  wire                       lost_add_we,
+  output wire                       first_rst_o,    // the FIFO reset after the start: words dropped then are not lost
+  input  wire                       flush_i,        // no more data before the next trigger: send a last full burst
+  output reg  [63:0]                buf1_lost,      // samples lost before buffer 1, latched with its timestamp
+  output reg  [63:0]                buf2_lost,
   input  wire                       buf_sel_in,
   output wire                       buf_sel_out,
   output reg                        fifo_dis,
@@ -359,7 +365,9 @@ begin
     BUF_FILLING: begin
       if (reg_ctrl[CTRL_RESET])
           state_ns <= IDLE;
-      else if (fifo_lvl > AXI_BURST_LEN) begin // if next buffer is full, then wait
+      // A last burst at the end of a series of the block mode is sent too: nothing
+      // follows it until the next trigger.
+      else if ((fifo_lvl > AXI_BURST_LEN) || (flush_i && (fifo_lvl >= AXI_BURST_LEN))) begin
         state_ns = WAIT_DATA_RDY; // wait for FIFO 
       end
     end
@@ -445,6 +453,40 @@ begin
 
     if (buf2_timestamp_we)
       buf2_timestamp <= timestamp_capture_value;
+  end
+end
+
+assign first_rst_o = first_rst;
+
+////////////////////////////////////////////////////////////
+// Name : 64 bit lost sample counter
+// Counts the samples that were not written: whole words dropped while the
+// next buffer is not free and the samples dropped while the acquisition
+// waits for a trigger (both counted in the stream clock domain, lost_add),
+// and the words in the FIFO when it is reset. The count is latched into the register of a buffer
+// with its timestamp (the first request of the buffer), so it holds the
+// samples lost right before that buffer. It does not saturate.
+////////////////////////////////////////////////////////////
+
+wire [ 4-1:0] samps_per_word = use_8bit ? 4'd8 : 4'd4;
+reg  [64-1:0] lost_run;
+
+always @(posedge m_axi_aclk)
+begin
+  if ((m_axi_aresetn == 0) || (state_cs == IDLE)) begin
+    lost_run  <= 64'd0;
+    buf1_lost <= 64'd0;
+    buf2_lost <= 64'd0;
+  end else begin
+    if (buf1_timestamp_we)
+      buf1_lost <= lost_run;
+    if (buf2_timestamp_we)
+      buf2_lost <= lost_run;
+    // the words in the FIFO when it is reset after the last transfer to a buffer whose
+    // next one is not free are lost as well
+    lost_run <= ((buf1_timestamp_we || buf2_timestamp_we) ? 64'd0 : lost_run)
+              + (lost_add_we ? lost_add : 16'd0)
+              + ((axi_last_r2 && next_buf_full) ? fifo_lvl * samps_per_word : 64'd0);
   end
 end
 

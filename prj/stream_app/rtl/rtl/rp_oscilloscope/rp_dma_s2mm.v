@@ -34,6 +34,10 @@ module rp_dma_s2mm
   output wire [31:0]                    buf2_ms_cnt,
   output wire [63:0]                    buf1_timestamp,
   output wire [63:0]                    buf2_timestamp,
+  input  wire                           s_axis_drop,
+  input  wire                           s_axis_flush,
+  output wire [63:0]                    buf1_lost,
+  output wire [63:0]                    buf2_lost,
   input  wire                           buf_sel_in,
   output wire                           buf_sel_out,
   //                                        
@@ -93,6 +97,46 @@ assign                    buf1_ms_cnt = missed_samps_ch1 << shift;
 assign                    buf2_ms_cnt = missed_samps_ch2 << shift;
 
 assign m_axi_wdata  = fifo_rd_data;
+
+////////////////////////////////////////////////////////////
+// Name : Lost samples, stream clock domain
+// Words the FIFO does not take (the same condition as its write enable) and
+// samples dropped while the acquisition waits for a trigger are summed in the
+// stream clock domain and handed over to the controller with a toggle handshake
+// (the 250-12 runs the stream at 250 MHz and the AXI side at 125 MHz).
+////////////////////////////////////////////////////////////
+
+wire        first_rst;
+reg  [ 2:0] first_rst_s;
+reg  [ 2:0] lost_ack_s;
+reg  [15:0] lost_acc, lost_xfer;
+reg         lost_req;
+reg  [ 2:0] lost_req_m;
+reg  [15:0] lost_add;
+reg         lost_add_we;
+wire [15:0] lost_now = ((fifo_wr_we && fifo_dis_r && ~first_rst_s[2]) ? (use_8bit ? 16'd8 : 16'd4) : 16'd0)
+                     + s_axis_drop;
+
+always @(posedge s_axis_aclk) begin
+  first_rst_s <= {first_rst_s[1:0], first_rst};
+  lost_ack_s  <= {lost_ack_s[1:0], lost_req_m[2]};
+  if (~aresetn) begin
+    lost_acc <= 16'd0;
+    lost_req <= 1'b0;
+  end else if ((lost_req == lost_ack_s[2]) && ((lost_acc != 16'd0) || (lost_now != 16'd0))) begin
+    lost_xfer <= lost_acc + lost_now;
+    lost_acc  <= 16'd0;
+    lost_req  <= ~lost_req;
+  end else begin
+    lost_acc  <= lost_acc + lost_now;
+  end
+end
+
+always @(posedge m_axi_aclk) begin
+  lost_req_m  <= {lost_req_m[1:0], lost_req};
+  lost_add_we <= lost_req_m[2] ^ lost_req_m[1];
+  lost_add    <= lost_xfer;  // stable since before the toggle
+end
 assign m_axi_wstrb  = {AXI_DATA_BITS/8{1'b1}};
 assign m_axi_bready = m_axi_bvalid;
 
@@ -146,6 +190,12 @@ rp_dma_s2mm_ctrl #(
   .buf2_ms_cnt    (missed_samps_ch2),
   .buf1_timestamp (buf1_timestamp),
   .buf2_timestamp (buf2_timestamp),
+  .lost_add       (lost_add),
+  .lost_add_we    (lost_add_we),
+  .first_rst_o    (first_rst),
+  .flush_i        (s_axis_flush),
+  .buf1_lost      (buf1_lost),
+  .buf2_lost      (buf2_lost),
   .buf_sel_in     (buf_sel_in),
   .buf_sel_out    (buf_sel_out),
   .fifo_dis       (fifo_dis),
