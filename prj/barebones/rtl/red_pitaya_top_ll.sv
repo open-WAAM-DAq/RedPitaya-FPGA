@@ -33,8 +33,12 @@ module red_pitaya_top_ll #()
   inout  logic          DDR_odt    ,
   inout  logic          DDR_ras_n  ,
   inout  logic          DDR_reset_n,
-  inout  logic          DDR_we_n
+  inout  logic          DDR_we_n   ,
+  // enables the board clock generator: without it there is no ADC nor DAC clock
+  output logic          out_sync_o
 );
+
+assign out_sync_o = 1'b1;
 
 system system_i 
 (
