@@ -321,6 +321,14 @@ proc create_root_design { parentCell } {
       CONFIG.TRIG_SRC_NUM {6} \
       CONFIG.NUM_CHANNELS $::stream_app_adc_count \
    ] $rp_oscilloscope
+   # the rtl_250 scope only: its own ADC clock with the buses of the other blocks on the AXI
+   # clock (Ti boards), the equalization filter
+   if {[info exists ::stream_app_async_bus]} {
+      set_property CONFIG.ASYNC_BUS $::stream_app_async_bus $rp_oscilloscope
+   }
+   if {[info exists ::stream_app_filter]} {
+      set_property CONFIG.EN_FILTER $::stream_app_filter $rp_oscilloscope
+   }
 
 
    # Create instance: xadc, and set properties

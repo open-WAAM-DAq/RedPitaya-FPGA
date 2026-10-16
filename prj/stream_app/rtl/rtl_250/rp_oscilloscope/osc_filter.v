@@ -72,8 +72,8 @@ reg  signed [30-1:0]  r02_reg; // BB mult - 10 = 28->30
 
 wire signed [41-1:0]  aa_mult; // r3reg_dsp1 + coeff_aa = 41->43
 wire signed [48-1:0]  r3_sum; // r2reg+25+1 = 49->51
-reg  signed [23-1:0]  r3_reg_dsp1; // r3_sum-25 = 23->25
-reg  signed [23-1:0]  r3_reg_dsp2; // r3_sum-25 = 23->25
+(* use_dsp="yes" *) reg  signed [23-1:0]  r3_reg_dsp1; // r3_sum-25 = 23->25
+(* use_dsp="yes" *) reg  signed [23-1:0]  r3_reg_dsp2; // r3_sum-25 = 23->25
 reg  signed [23-1:0]  r3_reg_dsp3; // r3_sum-25 = 23->25
 
 wire signed [40-1:0]  pp_mult; // r4_reg + coeff_pp = 40->42
@@ -81,7 +81,7 @@ wire signed [18-1:0]  r4_sum; // r3shr+1
 reg  signed [17-1:0]  r4_reg; // r3sum-33-1
 reg  signed [17-1:0]  r3_shr; // r3sum-33-1
 
-wire signed [42-1:0]  kk_mult;
+reg  signed [42-1:0]  kk_mult;
 reg  signed [16-1:0]  r5_reg;
 reg                   bypass_reg;
 wire                  bypass_dis;
@@ -162,7 +162,8 @@ end
 //---------------------------------------------------------------------------------
 //  Scaling
 
-assign kk_mult = r4_reg * coeff_kk;
+always @(posedge clk)
+   kk_mult <= r4_reg * coeff_kk;
 
 always @(posedge clk)
 begin

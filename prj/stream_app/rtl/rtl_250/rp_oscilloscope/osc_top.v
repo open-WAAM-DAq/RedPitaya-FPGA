@@ -9,7 +9,8 @@ module osc_top
     parameter TRIG_CNT_BITS     = 32, // Trigger counter bits
     parameter EVENT_SRC_NUM     = 1,  // Number of event sources
     parameter TRIG_SRC_NUM      = 1, // Number of trigger sources
-    parameter CHAN_NUM          = 1)( // which channel
+    parameter CHAN_NUM          = 1,  // which channel
+    parameter EN_FILTER         = 0)( // build the equalization filter
   input wire                              clk_axi,
   input wire                              clk_adc,
   input wire                              axi_rstn,
@@ -317,9 +318,10 @@ osc_calib #(
 assign filt_in_tdata  = cfg_legacy_calib_r ? s_axis_tdata  : calib_tdata;
 assign filt_in_tvalid = cfg_legacy_calib_r ? s_axis_tvalid : calib_tvalid;
 
-// the 250-12 has no front end filter to equalize (profile: is_fast_adc_filter_present =
-// false, the streaming server always sets the bypass): the filter is not built
-osc_filter #(.EN_FILTER (0)) i_dfilt (
+// the filter is not built on the 250-12: no front end filter to equalize (profile:
+// is_fast_adc_filter_present = false, the server always bypasses it) and its IIR loops do not
+// run at 250 MHz; the Ti boards (125 MHz and less) build it
+osc_filter #(.EN_FILTER (EN_FILTER)) i_dfilt (
    // ADC
   .clk              ( clk_adc     ),  // ADC clock
   .rst_n            ( rstn_fil    ),  // ADC reset - active low

@@ -90,6 +90,18 @@ set ::hp1_clk_freq 125000000
 set ::hp2_clk_freq 125000000
 set ::hp3_clk_freq 125000000
 
+if {$prj_name == "stream_app"} {
+   # The scope of the 2 channel 250-12 variant runs on its own ADC clock (par_clk of the
+   # ADC366x: 125 MHz on the 125-14 TI, 62.5 MHz on the 65-16 TI) and stamps the buffers in
+   # ADC samples; the DAC and the GPIO block stay on 125 MHz, the scope carries the trigger
+   # and event buses across. Both ADCs deliver 16 bit samples. The equalization filter is built.
+   set ::stream_app_rtl       $path_rtl_prj/rtl_250
+   set ::stream_app_adc_count 2
+   set ::stream_app_adc_bits  16
+   set ::stream_app_async_bus 1
+   set ::stream_app_filter    1
+}
+
 if {$prj_name == "logic"} {
    # Without this block the logic build fails on an unset ::logic_freq.
    set ::logic_freq 125000000
@@ -138,7 +150,12 @@ if {$prj_name != "pyrpl"} {
    }
 }
 
-add_files                               $path_rtl_prj
+if {$prj_name == "stream_app"} {
+   # only the top level files: the IP variants below are in the IP repository
+   add_files -norecurse                 $path_rtl_prj
+} else {
+   add_files                            $path_rtl_prj
+}
 add_files                               $path_bd
 
 set ip_files [glob -nocomplain $path_ip/*.xci]
