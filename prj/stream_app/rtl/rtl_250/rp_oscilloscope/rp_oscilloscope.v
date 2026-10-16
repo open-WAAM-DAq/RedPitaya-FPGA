@@ -727,7 +727,7 @@ scope_cfg #(
   .cfg_dma_buf_size_i       (cfg_dma_buf_size),
   .cfg_dma_ctrl_i           (cfg_dma_ctrl),
   .cfg_dma_ctrl_we_i        (cfg_dma_ctrl_we),
-  .cfg_timestamp_counter_i  (timestamp_counter_axi_r2),
+  .cfg_timestamp_counter_i  (timestamp_counter_adc),  // the DMA stamps the bursts in the stream domain
   .cfg_timestamp_init_i     (cfg_timestamp_init),
   .cfg_timestamp_init_we_i  (cfg_timestamp_init_we),
 
@@ -831,7 +831,7 @@ osc_top #(
   .cfg_dma_buf_size_i       (cfg_dma_buf_size),
   .cfg_dma_ctrl_i           (cfg_dma_ctrl),
   .cfg_dma_ctrl_we_i        (cfg_dma_ctrl_we),
-  .cfg_timestamp_counter_i  (timestamp_counter_axi_r2),
+  .cfg_timestamp_counter_i  (timestamp_counter_adc),  // the DMA stamps the bursts in the stream domain
   .cfg_timestamp_init_i     (cfg_timestamp_init),
   .cfg_timestamp_init_we_i  (cfg_timestamp_init_we),
 

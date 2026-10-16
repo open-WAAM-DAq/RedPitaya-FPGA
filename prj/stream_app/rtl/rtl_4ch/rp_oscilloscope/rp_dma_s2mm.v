@@ -22,7 +22,7 @@ module rp_dma_s2mm
   input  wire [31:0]                    reg_dst_addr1,  
   input  wire [31:0]                    reg_dst_addr2,  
   input  wire [31:0]                    reg_buf_size,
-  input  wire [63:0]                    timestamp_counter,
+  input  wire [63:0]                    timestamp_counter,  // in the stream clock domain
   input  wire [63:0]                    timestamp_init,
   input  wire                           timestamp_init_we,
   output wire                           ctl_start_o,
@@ -76,6 +76,8 @@ localparam FIFO_CNT_BITS = 10;  // Size of the FIFO data counter
 
 wire                      fifo_rst;
 wire [AXI_DATA_BITS-1:0]  fifo_wr_data; 
+wire [63:0]               fifo_wr_ts;     // timestamp of the first sample of the word
+wire [63:0]               fifo_rd_ts;
 wire                      fifo_wr_we;
 wire [AXI_DATA_BITS-1:0]  fifo_rd_data;
 wire                      fifo_rd_re;
@@ -173,7 +175,7 @@ rp_dma_s2mm_ctrl #(
   .reg_dst_addr1  (reg_dst_addr1),  
   .reg_dst_addr2  (reg_dst_addr2),  
   .reg_buf_size   (reg_buf_size), 
-  .timestamp_counter (timestamp_counter),
+  .data_ts        (fifo_rd_ts),
   .timestamp_init (timestamp_init),
   .timestamp_init_we (timestamp_init_we),
   .ctl_start_o    (ctl_start_o),  
@@ -226,11 +228,13 @@ rp_dma_s2mm_upsize #(
   .req_we         (req_we),
   .upsize_lvl     (upsize_lvl),
   .use_8bit       (use_8bit),
+  .ts_i           (timestamp_counter),
   .s_axis_tdata   (s_axis_tdata),      
   .s_axis_tvalid  (s_axis_tvalid),     
   .s_axis_tready  (s_axis_tready),     
   .s_axis_tlast   (s_axis_tlast),                 
   .m_axis_tdata   (fifo_wr_data),      
+  .m_axis_tts     (fifo_wr_ts),
   .m_axis_tvalid  (fifo_wr_we),     
   .m_axis_tready  (1'b1));      
 
@@ -244,10 +248,10 @@ fifo_axi_data
   .wr_clk         (s_axis_aclk),               
   .rd_clk         (m_axi_aclk),               
   .rst            (fifo_rst),     
-  .din            (fifo_wr_data),                     
+  .din            ({fifo_wr_ts, fifo_wr_data}),
   .wr_en          (fifo_wr_we && ~fifo_dis),               
   .full           (),   
-  .dout           (fifo_rd_data),    
+  .dout           ({fifo_rd_ts, fifo_rd_data}),
   .rd_en          (fifo_rd_re),                                 
   .empty          (fifo_empty),                 
   .rd_data_count  (fifo_rd_cnt), 

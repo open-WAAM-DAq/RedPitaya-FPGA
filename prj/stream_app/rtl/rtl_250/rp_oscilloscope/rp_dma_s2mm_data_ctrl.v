@@ -10,6 +10,8 @@ module rp_dma_s2mm_data_ctrl(
   input  wire [7:0] req_data,
   input  wire       req_we,
   output reg  [7:0] req_xfer_cnt,
+  input  wire [1:0] req_mark,         // the request starts buffer 1 (bit 0) or 2 (bit 1)
+  output wire [1:0] first_beat_mark,  // the mark of the request during its first beat
   //  
   output reg        m_axi_wvalid,    
   input  wire       m_axi_wready,    
@@ -33,6 +35,9 @@ reg  [199:0]  state_ascii;             // ASCII state
 wire [7:0]    fifo_wr_data; 
 wire          fifo_wr_we;
 wire [7:0]    fifo_rd_data;
+wire [1:0]    fifo_rd_mark;
+reg  [1:0]    cur_mark;
+reg           first_pend;
 reg           fifo_rd_re;
 wire          fifo_empty;
 
@@ -40,15 +45,30 @@ fifo_axi_req U_fifo_axi_req(
   .wr_clk (m_axi_aclk),
   .rd_clk (m_axi_aclk),      
   .rst    (fifo_rst),      
-  .din    (fifo_wr_data),     
+  .din    ({req_mark, fifo_wr_data}),
   .wr_en  (fifo_wr_we),  
   .full   (),  
-  .dout   (fifo_rd_data),   
+  .dout   ({fifo_rd_mark, fifo_rd_data}),
   .rd_en  (fifo_rd_re), 
   .empty  (fifo_empty));
 
 assign fifo_wr_data = req_data;
 assign fifo_wr_we   = req_we;
+
+always @(posedge m_axi_aclk)
+begin
+  if ((m_axi_aresetn == 0) || fifo_rst) begin
+    cur_mark   <= 2'b00;
+    first_pend <= 1'b0;
+  end else if (fifo_rd_re) begin
+    cur_mark   <= fifo_rd_mark;
+    first_pend <= 1'b1;
+  end else if (m_axi_wvalid && m_axi_wready) begin
+    first_pend <= 1'b0;
+  end
+end
+
+assign first_beat_mark = (m_axi_wvalid && m_axi_wready && first_pend) ? cur_mark : 2'b00;
 
 ////////////////////////////////////////////////////////////
 // Name : State machine seq logic

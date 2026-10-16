@@ -23,7 +23,7 @@ module rp_dma_s2mm_ctrl
   input  wire [31:0]                reg_dst_addr1,
   input  wire [31:0]                reg_dst_addr2,
   input  wire [31:0]                reg_buf_size,
-  input  wire [63:0]                timestamp_counter,
+  input  wire [63:0]                data_ts,        // timestamp of the word at the head of the data FIFO
   input  wire [63:0]                timestamp_init,
   input  wire                       timestamp_init_we,
   output wire                       ctl_start_o,
@@ -125,9 +125,10 @@ reg  [31:0]               buf2_ms_lvl;
 reg  [1:0]                upsize_lvl_r;
 
 reg  [4:0]                fifo_rst_cnt;
-wire [7:0]                fifo_wr_data; 
+wire [10-1:0]             fifo_wr_data;
 wire                      fifo_wr_we;
-wire [7:0]                fifo_rd_data;
+wire [10-1:0]             fifo_rd_data;   // the request FIFO IP also carries the buffer marks of the data control
+wire [1:0]                buf_first_beat; // first beat of buffer 1 (bit 0) or 2 (bit 1)
 reg                       fifo_rd_re;
 wire                      fifo_empty;
 reg                       next_buf_full;
@@ -141,7 +142,6 @@ wire                      full_immed;
 wire                      dma_req_start;
 wire                      buf1_timestamp_we;
 wire                      buf2_timestamp_we;
-wire [63:0]               timestamp_capture_value;
 
 assign m_axi_awaddr  = req_addr;
 assign m_axi_awsize  = $clog2(AXI_DATA_BITS/8);   
@@ -169,7 +169,6 @@ assign full_immed  = m_axi_wvalid & m_axi_wlast & next_buf_full;
 assign dma_req_start = m_axi_awvalid & m_axi_awready;
 assign buf1_timestamp_we = dma_req_start & (req_buf_addr_sel == 1'b0) & (req_addr == reg_dst_addr1);
 assign buf2_timestamp_we = dma_req_start & (req_buf_addr_sel == 1'b1) & (req_addr == reg_dst_addr2);
-assign timestamp_capture_value = timestamp_init_we ? timestamp_init : timestamp_counter;
 ////////////////////////////////////////////////////////////
 // Name : Request FIFO 
 // Stores the DMA requests.
@@ -186,7 +185,7 @@ fifo_axi_req U_fifo_axi_req(
   .rd_en  (fifo_rd_re), 
   .empty  (fifo_empty));
   
-assign fifo_wr_data = req_data;
+assign fifo_wr_data = {2'b00, req_data};
 assign fifo_wr_we   = req_we && ~fifo_dis; // writing request buffer is only enabled when not waiting on clearing of the next buffer. 
 
 ////////////////////////////////////////////////////////////
@@ -202,6 +201,8 @@ rp_dma_s2mm_data_ctrl U_dma_s2mm_data_ctrl(
   .req_data       (dat_ctrl_req_data),              
   .req_we         (dat_ctrl_req_we),            
   .req_xfer_cnt   (req_xfer_cnt),
+  .req_mark       ({buf2_timestamp_we, buf1_timestamp_we}),
+  .first_beat_mark (buf_first_beat),
   .m_axi_wvalid   (m_axi_wvalid),          
   .m_axi_wready   (m_axi_wready),          
   .m_axi_wlast    (m_axi_wlast));
@@ -448,11 +449,12 @@ begin
     buf1_timestamp <= 64'd0;
     buf2_timestamp <= 64'd0;
   end else begin
-    if (buf1_timestamp_we)
-      buf1_timestamp <= timestamp_capture_value;
+    // the first word written to the buffer: its timestamp is the one of the first sample
+    if (buf_first_beat[0])
+      buf1_timestamp <= data_ts;
 
-    if (buf2_timestamp_we)
-      buf2_timestamp <= timestamp_capture_value;
+    if (buf_first_beat[1])
+      buf2_timestamp <= data_ts;
   end
 end
 
