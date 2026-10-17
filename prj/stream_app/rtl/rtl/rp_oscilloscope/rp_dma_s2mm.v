@@ -78,6 +78,8 @@ wire                      fifo_rst;
 wire [AXI_DATA_BITS-1:0]  fifo_wr_data; 
 wire [63:0]               fifo_wr_ts;     // timestamp of the first sample of the word
 wire [63:0]               fifo_rd_ts;
+wire                      fifo_wr_en;
+reg  [31:0]               fifo_wr_words;  // words the data FIFO took, free running
 wire                      fifo_wr_we;
 wire [AXI_DATA_BITS-1:0]  fifo_rd_data;
 wire                      fifo_rd_re;
@@ -176,6 +178,7 @@ rp_dma_s2mm_ctrl #(
   .reg_dst_addr2  (reg_dst_addr2),  
   .reg_buf_size   (reg_buf_size), 
   .data_ts        (fifo_rd_ts),
+  .fifo_wr_words  (fifo_wr_words),
   .timestamp_init (timestamp_init),
   .timestamp_init_we (timestamp_init_we),
   .ctl_start_o    (ctl_start_o),  
@@ -249,7 +252,7 @@ fifo_axi_data
   .rd_clk         (m_axi_aclk),               
   .rst            (fifo_rst),     
   .din            ({fifo_wr_ts, fifo_wr_data}),
-  .wr_en          (fifo_wr_we && ~fifo_dis_r),
+  .wr_en          (fifo_wr_en),
   .full           (),   
   .dout           ({fifo_rd_ts, fifo_rd_data}),
   .rd_en          (fifo_rd_re),                                 
@@ -259,5 +262,14 @@ fifo_axi_data
   .rd_rst_busy    ());
   
 assign fifo_rd_re = m_axi_wvalid & m_axi_wready;  
+
+assign fifo_wr_en = fifo_wr_we && ~fifo_dis_r;
+
+always @(posedge s_axis_aclk) begin
+  if (~aresetn)
+    fifo_wr_words <= 32'd0;
+  else if (fifo_wr_en)
+    fifo_wr_words <= fifo_wr_words + 32'd1;
+end
  
 endmodule

@@ -1,9 +1,10 @@
-// rp_dma_s2mm buffer timestamps (rtl variant, stream clock = AXI clock).
+// rp_dma_s2mm buffer timestamps and lost counter (rtl variant, stream clock = AXI clock).
 // Every sample is the low 16 bits of the timestamp counter at its input, so the first
-// sample of a buffer in memory must equal the low bits of the buffer timestamp.
+// sample of a buffer in memory must equal the low bits of the buffer timestamp, and the
+// lost counter of a buffer must equal the gap in the data before it.
 // The AXI slave stalls at random and a slow consumer acknowledges the buffers late, so the
 // DMA drops data, resets its FIFO and restarts in the middle of bursts. Breaks inside a
-// buffer and a lost counter off the data are counted, not failed (see KNOWN below).
+// buffer (the overflow handling of the DMA) are counted, not failed.
 `timescale 1ns / 1ps
 
 module dma_ts_tb;
@@ -14,7 +15,7 @@ localparam DST1      = 32'h0001_0000;
 localparam DST2      = 32'h0002_0000;
 
 int unsigned DEC;
-int unsigned errors = 0, checks = 0, lost_off = 0, breaks = 0;
+int unsigned errors = 0, checks = 0, breaks = 0;
 
 reg clk = 0;
 always #4 clk = ~clk;
@@ -107,8 +108,10 @@ task automatic check_buf(input int unsigned addr, input [63:0] bts, input [63:0]
   if (have_prev) begin
     dgap = smp(addr, 0) - prev_last - 16'(DEC);
     lgap = 16'(lost * DEC);
-    // known: the words in the FIFO when it is reset are estimated from its read count
-    if (lgap != dgap) lost_off++;
+    if (lgap != dgap) begin
+      errors++;
+      $display("FAIL buffer %0d: lost %0d samples, the data says %0d (modulo 2^16 / %0d)", idx, lost, $signed(dgap) / $signed(DEC), DEC);
+    end
   end
   prev_last = smp(addr, BUF_SMP - 1);
   if (smp(addr, 0) !== bts[15:0]) begin
@@ -122,7 +125,8 @@ task automatic check_buf(input int unsigned addr, input [63:0] bts, input [63:0]
     end
   end
   if (bad) breaks++;
-  prev_ts = bts; have_prev = 1;
+  // after a break inside the buffer its last sample says nothing about the next gap
+  prev_ts = bts; have_prev = (bad == 0);
 endtask
 
 task automatic run(input int unsigned dec, input int unsigned nbuf, input int unsigned slow);
@@ -162,7 +166,6 @@ initial begin
   run(4, 30, 30);
   run(64, 12, 40);
   if (breaks) $display("KNOWN buffers with a break inside (DMA overflow handling): %0d of %0d", breaks, checks);
-  if (lost_off) $display("KNOWN L-d2: the lost counter is off the data in %0d of %0d buffers (words in the FIFO at its reset)", lost_off, checks);
   if (errors == 0) $display("PASS dma_ts_tb (%0d buffers checked)", checks);
   else             $display("FAIL dma_ts_tb: %0d errors in %0d buffers", errors, checks);
   $finish;

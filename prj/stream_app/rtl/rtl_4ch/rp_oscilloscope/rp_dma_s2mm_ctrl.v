@@ -24,6 +24,7 @@ module rp_dma_s2mm_ctrl
   input  wire [31:0]                reg_dst_addr2,
   input  wire [31:0]                reg_buf_size,
   input  wire [63:0]                data_ts,        // timestamp of the word at the head of the data FIFO
+  input  wire [31:0]                fifo_wr_words,  // words the data FIFO took (stream clock domain, free running)
   input  wire [63:0]                timestamp_init,
   input  wire                       timestamp_init_we,
   output wire                       ctl_start_o,
@@ -465,30 +466,65 @@ assign first_rst_o = first_rst;
 // Counts the samples that were not written: whole words dropped while the
 // next buffer is not free and the samples dropped while the acquisition
 // waits for a trigger (both counted in the stream clock domain, lost_add),
-// and the words in the FIFO when it is reset. The count is latched into the register of a buffer
+// and the words in the FIFO when it is reset (words taken minus words read minus words
+// already thrown away, taken at the end of the reset when no word is written). The count is latched into the register of a buffer
 // with its timestamp (the first request of the buffer), so it holds the
 // samples lost right before that buffer. It does not saturate.
 ////////////////////////////////////////////////////////////
 
 wire [ 4-1:0] samps_per_word = use_8bit ? 4'd8 : 4'd4;
-reg  [64-1:0] lost_run;
+(* ASYNC_REG = "TRUE" *) reg [31:0] wr_words_m, wr_words_s;
+reg  [31:0]   rd_words, gone_words, rst_drop;
+reg           rst_drop_we;
+
+// The FIFO is disabled from the last transfer before its reset to the end of FIFO_RST: the
+// count of the words it took is stable when it is taken at the end of the reset. The reset
+// after the start only aligns the counts (those words are not lost).
+always @(posedge m_axi_aclk)
+begin
+  wr_words_m <= fifo_wr_words;
+  wr_words_s <= wr_words_m;
+  if (m_axi_aresetn == 0) begin
+    rd_words    <= 32'd0;
+    gone_words  <= 32'd0;
+    rst_drop    <= 32'd0;
+    rst_drop_we <= 1'b0;
+  end else begin
+    if (m_axi_wvalid && m_axi_wready)
+      rd_words <= rd_words + 32'd1;
+    rst_drop_we <= 1'b0;
+    if ((state_cs == FIFO_RST) && (fifo_rst_cnt == 30)) begin
+      rst_drop    <= wr_words_s - rd_words - gone_words;
+      gone_words  <= wr_words_s - rd_words;
+      rst_drop_we <= ~first_rst;
+    end
+  end
+end
+
+// The total is never cleared: a buffer gets the total minus the mark of the previous buffer
+// start, so the buffer start (an address compare) is only an enable, not in the adder path.
+reg  [64-1:0] lost_total, lost_mark;
+reg  [32-1:0] lost_inc;   // the samples lost in the previous clock
 
 always @(posedge m_axi_aclk)
 begin
   if ((m_axi_aresetn == 0) || (state_cs == IDLE)) begin
-    lost_run  <= 64'd0;
-    buf1_lost <= 64'd0;
-    buf2_lost <= 64'd0;
+    lost_total <= 64'd0;
+    lost_mark  <= 64'd0;
+    lost_inc   <= 32'd0;
+    buf1_lost  <= 64'd0;
+    buf2_lost  <= 64'd0;
   end else begin
+    // the words in the FIFO when it is reset are lost as well
+    lost_inc   <= (lost_add_we ? lost_add : 16'd0)
+                + (rst_drop_we ? rst_drop * samps_per_word : 32'd0);
+    lost_total <= lost_total + lost_inc;
     if (buf1_timestamp_we)
-      buf1_lost <= lost_run;
+      buf1_lost <= lost_total + lost_inc - lost_mark;
     if (buf2_timestamp_we)
-      buf2_lost <= lost_run;
-    // the words in the FIFO when it is reset after the last transfer to a buffer whose
-    // next one is not free are lost as well
-    lost_run <= ((buf1_timestamp_we || buf2_timestamp_we) ? 64'd0 : lost_run)
-              + (lost_add_we ? lost_add : 16'd0)
-              + ((axi_last_r2 && next_buf_full) ? fifo_lvl * samps_per_word : 64'd0);
+      buf2_lost <= lost_total + lost_inc - lost_mark;
+    if (buf1_timestamp_we || buf2_timestamp_we)
+      lost_mark <= lost_total + lost_inc;
   end
 end
 
