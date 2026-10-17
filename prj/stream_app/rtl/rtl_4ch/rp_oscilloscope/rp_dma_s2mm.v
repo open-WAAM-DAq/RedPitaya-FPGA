@@ -79,6 +79,8 @@ wire [AXI_DATA_BITS-1:0]  fifo_wr_data;
 wire [63:0]               fifo_wr_ts;     // timestamp of the first sample of the word
 wire [63:0]               fifo_rd_ts;
 wire                      fifo_wr_en;
+wire                      fifo_wr_ok;
+wire                      fifo_full;
 reg  [31:0]               fifo_wr_words;  // words the data FIFO took, free running
 wire                      fifo_wr_we;
 wire [AXI_DATA_BITS-1:0]  fifo_rd_data;
@@ -118,7 +120,7 @@ reg         lost_req;
 reg  [ 2:0] lost_req_m;
 reg  [15:0] lost_add;
 reg         lost_add_we;
-wire [15:0] lost_now = ((fifo_wr_we && fifo_dis && ~first_rst_s[2]) ? (use_8bit ? 16'd8 : 16'd4) : 16'd0)
+wire [15:0] lost_now = ((fifo_wr_we && ~fifo_wr_ok && ~first_rst_s[2]) ? (use_8bit ? 16'd8 : 16'd4) : 16'd0)
                      + s_axis_drop;
 
 always @(posedge s_axis_aclk) begin
@@ -253,7 +255,7 @@ fifo_axi_data
   .rst            (fifo_rst),     
   .din            ({fifo_wr_ts, fifo_wr_data}),
   .wr_en          (fifo_wr_en),
-  .full           (),   
+  .full           (fifo_full),  // also high while the FIFO is in reset
   .dout           ({fifo_rd_ts, fifo_rd_data}),
   .rd_en          (fifo_rd_re),                                 
   .empty          (fifo_empty),                 
@@ -264,11 +266,13 @@ fifo_axi_data
 assign fifo_rd_re = m_axi_wvalid & m_axi_wready;  
 
 assign fifo_wr_en = fifo_wr_we && ~fifo_dis;
+// a word the FIFO does not take (disabled, in reset or full) is lost
+assign fifo_wr_ok = fifo_wr_en && ~fifo_full;
 
 always @(posedge s_axis_aclk) begin
   if (~aresetn)
     fifo_wr_words <= 32'd0;
-  else if (fifo_wr_en)
+  else if (fifo_wr_ok)
     fifo_wr_words <= fifo_wr_words + 32'd1;
 end
  
