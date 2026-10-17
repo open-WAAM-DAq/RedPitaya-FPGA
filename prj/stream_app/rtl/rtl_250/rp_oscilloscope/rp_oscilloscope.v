@@ -207,10 +207,17 @@ assign s_axis_osc_tdata[4*16-1:3*16] = adc_data_ch4_signed;
 */
 
 
+// rst_n comes from the AXI clock domain, and the 250-12 constraints false-path that crossing:
+// one synchronizer, so that both channels leave reset on the same clock (their ramps and
+// pipelines start together)
+(* ASYNC_REG = "TRUE" *) reg rstn_sync = 1'b0;
 (* keep = "true", max_fanout = 64 *) reg rstn_cfg;  // not merged with the resets of the channels
+(* keep = "true" *) reg rstn_osc;                   // the reset of the channels
 always @(posedge clk)
 begin
-  rstn_cfg <= rst_n;
+  rstn_sync <= rst_n;
+  rstn_cfg  <= rstn_sync;
+  rstn_osc  <= rstn_sync;
 end
 
 reg rstn_cfgax;
@@ -679,7 +686,7 @@ scope_cfg #(
   .clk_adc          (clk),   
   .cfg_trig_blocks_i        (cfg_trig_blocks),
   .axi_rstn         (m_axi_osc1_aresetn), 
-  .adc_rstn         (rst_n), 
+  .adc_rstn         (rstn_osc), 
   .s_axis_tdata     (s_axis_osc1_tdata), 
   .s_axis_tvalid    (1'b1),
 
@@ -789,7 +796,7 @@ osc_top #(
   .clk_axi          (m_axi_osc1_aclk),   
   .clk_adc          (clk),   
   .axi_rstn         (m_axi_osc2_aresetn), 
-  .adc_rstn         (rst_n), 
+  .adc_rstn         (rstn_osc), 
   .s_axis_tdata     (s_axis_osc2_tdata), 
   .s_axis_tvalid    (1'b1),
 
@@ -897,7 +904,7 @@ osc_top #(
   .clk_axi          (m_axi_osc1_aclk),   
   .clk_adc          (clk),   
   .axi_rstn         (m_axi_osc1_aresetn), 
-  .adc_rstn         (rst_n), 
+  .adc_rstn         (rstn_osc), 
   .s_axis_tdata     (s_axis_osc_tdata[1*16-1:0*16]), 
   .s_axis_tvalid    (1'b1),
 

@@ -88,6 +88,7 @@ wire [FIFO_CNT_BITS-1:0]  fifo_rd_cnt;
 wire [7:0]                req_data;
 wire                      req_we;
 wire                      fifo_dis;
+reg                       fifo_dis_s;     // fifo_dis in the stream clock domain
 wire [1:0]                upsize_lvl;
 reg                       ctl_start_r;
 reg                       use_8bit_r;
@@ -116,8 +117,12 @@ reg         lost_req;
 reg  [ 2:0] lost_req_m;
 reg  [15:0] lost_add;
 reg         lost_add_we;
-wire [15:0] lost_now = ((fifo_wr_we && fifo_dis && ~first_rst_s[2]) ? (use_8bit ? 16'd8 : 16'd4) : 16'd0)
+wire [15:0] lost_now = ((fifo_wr_we && fifo_dis_s && ~first_rst_s[2]) ? (use_8bit ? 16'd8 : 16'd4) : 16'd0)
                      + s_axis_drop;
+
+// fifo_dis comes from the AXI clock (a crossing the 250-12 constraints false-path): one
+// register, so that the FIFO write and the lost count see it change on the same clock
+always @(posedge s_axis_aclk) fifo_dis_s <= fifo_dis;
 
 always @(posedge s_axis_aclk) begin
   first_rst_s <= {first_rst_s[1:0], first_rst};
@@ -258,7 +263,7 @@ fifo_axi_data
   
 assign fifo_rd_re = m_axi_wvalid & m_axi_wready;  
 
-assign fifo_wr_en = fifo_wr_we && ~fifo_dis;
+assign fifo_wr_en = fifo_wr_we && ~fifo_dis_s;
 
 always @(posedge s_axis_aclk) begin
   if (~aresetn)
