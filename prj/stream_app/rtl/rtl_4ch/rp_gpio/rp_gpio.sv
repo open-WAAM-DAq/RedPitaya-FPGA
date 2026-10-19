@@ -246,7 +246,9 @@ reg [ 8-1:0]                    cfg_ctrl_reg_out;
 wire [32-1:0]                   dma_sts_reg_in;
 wire [32-1:0]                   dma_sts_reg_out;
 
-reg [16-1:0]                    gpio_outdat;
+// in the IOB, as the input registers below: the self loop and the line timing do not depend
+// on the placement
+(* IOB = "TRUE" *) reg [16-1:0]  gpio_outdat;
 
 
 reg [M_AXI_GPIO_ADDR_BITS-1:0]   cfg_dma_buf_size;
@@ -292,8 +294,14 @@ wire ext_trig_pin = ext_trig_i | (gpiop_i[0] & ~cfg_ext_trig_dio0_dis);
 IOBUF iobuf_gpio_p [8-1:0] (.O (gpio_p_i), .IO(exp_p_io), .I(gpio_p_o), .T(dir_p));
 IOBUF iobuf_gpio_n [8-1:0] (.O (gpio_n_i), .IO(exp_n_io), .I(gpio_n_o), .T(dir_n));
 
-assign sti.TDATA[0] = gpio_p_i ;
-assign sti.TDATA[1] = gpio_n_i ;
+(* IOB = "TRUE" *) reg [8-1:0] gpio_p_i_r, gpio_n_i_r;
+always @(posedge clk) begin
+    gpio_p_i_r <= gpio_p_i;
+    gpio_n_i_r <= gpio_n_i;
+end
+
+assign sti.TDATA[0] = gpio_p_i_r ;
+assign sti.TDATA[1] = gpio_n_i_r ;
 
 // the lines keep the last valid output sample, as in the simulation branch: the stream data
 // bus carries arbitrary values between samples and while the output is idle
