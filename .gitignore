@@ -8,3 +8,4 @@ prj/fsbl/test/ref.c
 prj/fsbl/test/test_patch
 prj/fsbl/test/test_env
 __pycache__/
+**/sdk
