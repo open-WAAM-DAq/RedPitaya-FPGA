@@ -111,6 +111,11 @@ set rst_gen2 [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rs
 # Create instance: rst_gen3, and set properties
 set rst_gen3 [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_gen3 ]
 
+# The DAC DMA runs on clk_125 as the DAC (2 x 250 MB/s on HP2 and HP3): 200 MHz left no
+# timing margin there. The scope's DMA masters get register slices: WREADY of HP0 no longer
+# drives the output enables of the scope's FIFOs combinationally.
+set_property -dict [list CONFIG.S00_HAS_REGSLICE {3} CONFIG.S01_HAS_REGSLICE {3}] [get_bd_cells axi_interconnect_0]
+
 # Create instance: rst_gen_osc (the scope's clock domain)
 set rst_gen_osc [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_gen_osc ]
 
@@ -161,8 +166,6 @@ connect_bd_net -net rst_gen_osc_peripheral_aresetn [get_bd_pins rst_gen_osc/peri
 connect_bd_net -net adc_data_ch1_0_1 [get_bd_ports adc_data_ch1] [get_bd_pins rp_oscilloscope/adc_data_ch1]
 connect_bd_net -net adc_data_ch2_0_1 [get_bd_ports adc_data_ch2] [get_bd_pins rp_oscilloscope/adc_data_ch2]
 
-connect_bd_net -net clk_gen_clk_200 [get_bd_pins clk_gen/clk_200] [get_bd_pins processing_system7/S_AXI_HP2_ACLK] [get_bd_pins processing_system7/S_AXI_HP3_ACLK] \
-[get_bd_pins rp_dac/m_axi_dac1_aclk] [get_bd_pins rp_dac/m_axi_dac2_aclk] [get_bd_pins rst_gen2/slowest_sync_clk]
 
 connect_bd_net -net ARESETN_1 [get_bd_pins axi_reg/ARESETN] [get_bd_pins rst_gen3/interconnect_aresetn] [get_bd_pins axi_reg/M00_ARESETN] [get_bd_pins axi_reg/M01_ARESETN] \
 [get_bd_pins axi_reg/M02_ARESETN] [get_bd_pins axi_reg/S00_ARESETN] [get_bd_pins rp_dac/s_axi_reg_aresetn] [get_bd_pins rp_gpio/s_axi_reg_aresetn] [get_bd_pins rp_oscilloscope/s_axi_reg_aresetn]
@@ -178,7 +181,9 @@ connect_bd_net -net clk_gen_clk_62_5 [get_bd_pins axi_reg/ACLK] [get_bd_pins axi
 connect_bd_net -net clk_gen_adc_clk [get_bd_ports clk_out] [get_bd_pins rst_gen/slowest_sync_clk] [get_bd_pins axi_interconnect_2/ACLK] [get_bd_pins axi_interconnect_2/M00_ACLK] \
 [get_bd_pins axi_interconnect_2/S00_ACLK] [get_bd_pins axi_interconnect_2/S01_ACLK] [get_bd_pins clk_gen/clk_125] \
 [get_bd_pins processing_system7/S_AXI_HP1_ACLK] [get_bd_pins rp_dac/clk] [get_bd_pins rp_gpio/clk] [get_bd_pins rp_gpio/m_axi_gpio_in_aclk] [get_bd_pins rp_gpio/m_axi_gpio_out_aclk] \
-[get_bd_pins rp_oscilloscope/bus_clk] [get_bd_pins xadc/s_axi_aclk]
+[get_bd_pins rp_oscilloscope/bus_clk] [get_bd_pins xadc/s_axi_aclk] \
+[get_bd_pins processing_system7/S_AXI_HP2_ACLK] [get_bd_pins processing_system7/S_AXI_HP3_ACLK] \
+[get_bd_pins rp_dac/m_axi_dac1_aclk] [get_bd_pins rp_dac/m_axi_dac2_aclk] [get_bd_pins rst_gen2/slowest_sync_clk]
 
 connect_bd_net -net dac_data_ch1_0_1 [get_bd_ports dac_dat_a] [get_bd_pins rp_dac/dac_data_cha_o]
 connect_bd_net -net dac_data_ch2_0_1 [get_bd_ports dac_dat_b] [get_bd_pins rp_dac/dac_data_chb_o]
