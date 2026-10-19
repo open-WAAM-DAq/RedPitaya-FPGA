@@ -208,7 +208,8 @@ reg [32-1:0]                intr_cnt;
 
 reg [32-1:0]                curr_wp_r1, curr_wp_r2;
 
-always @(posedge clk_adc)
+// the write address is in the AXI clock domain, and so is the register read of it
+always @(posedge clk_axi)
 begin
   curr_wp_r1 <= m_axi_awaddr;
   curr_wp_r2 <= curr_wp_r1;

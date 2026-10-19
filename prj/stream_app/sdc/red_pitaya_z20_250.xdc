@@ -11,8 +11,7 @@ set_property PULLTYPE PULLUP [get_ports daisy_p_i[1]]
 set_false_path -from [get_clocks clk_fpga_0]               -to [get_clocks clk_125_system_clk_gen_0]
 set_false_path -from [get_clocks clk_125_system_clk_gen_0] -to [get_clocks clk_fpga_0]
 
-set_false_path -from [get_clocks clk_125_system_clk_gen_0] -to [get_clocks clk_200_system_clk_gen_0]
-set_false_path -from [get_clocks clk_200_system_clk_gen_0] -to [get_clocks clk_125_system_clk_gen_0]
+# clk_125 and clk_200 (250 MHz) come from one MMCM: the crossings between them are timed
 
 set_false_path -from [get_clocks clk_125_system_clk_gen_0] -to [get_clocks pll_ref_i]
 set_false_path -from [get_clocks pll_ref_i]                -to [get_clocks clk_125_system_clk_gen_0]
