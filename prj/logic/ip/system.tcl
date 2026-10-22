@@ -431,6 +431,12 @@ set M_AXI_STR_TX0_aclk [ create_bd_port -dir I -type clk -freq_hz $::logic_freq 
    CONFIG.c_sg_include_stscntrl_strm {0} \
    CONFIG.c_sg_length_width {23} \
  ] $axi_dma_2
+  if {[info exists ::la_dma_wide] && $::la_dma_wide} {
+    set_property -dict [ list \
+     CONFIG.c_s_axis_s2mm_tdata_width {64} \
+     CONFIG.c_m_axi_s2mm_data_width {64} \
+    ] $axi_dma_2
+  }
 
   # Create instance: axi_dma_3, and set properties
   set axi_dma_3 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma:7.1 axi_dma_3 ]
@@ -516,6 +522,18 @@ set M_AXI_STR_TX0_aclk [ create_bd_port -dir I -type clk -freq_hz $::logic_freq 
   # Create instance: axis_clock_converter_2, and set properties
   set axis_clock_converter_2 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_clock_converter:1.1 axis_clock_converter_2 ]
 
+  # Wide LA stream (::la_dma_wide, 250-12): the LA writes 16 bit at the ADC
+  # rate, 500 MB/s at 250 MHz.  The DMA side (FCLK_CLK1) runs at 125 MHz as on
+  # the other boards, where a 16 bit stream would carry half of that, so the
+  # stream is widened to 64 bit before the clock converter.
+  set la_dma_wide [expr {[info exists ::la_dma_wide] && $::la_dma_wide}]
+  if {$la_dma_wide} {
+    set axis_dwidth_converter_2 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_dwidth_converter:1.1 axis_dwidth_converter_2 ]
+    set_property -dict [ list \
+     CONFIG.M_TDATA_NUM_BYTES {8} \
+    ] $axis_dwidth_converter_2
+  }
+
   # Create instance: axis_clock_converter_6, and set properties
   set axis_clock_converter_6 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_clock_converter:1.1 axis_clock_converter_6 ]
 
@@ -593,7 +611,12 @@ set M_AXI_STR_TX0_aclk [ create_bd_port -dir I -type clk -freq_hz $::logic_freq 
   connect_bd_intf_net -intf_net S01_AXI_1 [get_bd_intf_pins axi_dma_2/M_AXI_S2MM] [get_bd_intf_pins axi_interconnect_3/S01_AXI]
   connect_bd_intf_net -intf_net S_AXI_STR_RX0_1 [get_bd_intf_ports M_AXI_STR_TX0] [get_bd_intf_ports S_AXI_STR_RX0]
   connect_bd_intf_net -intf_net S_AXI_STR_RX1_1 [get_bd_intf_ports M_AXI_STR_TX1] [get_bd_intf_ports S_AXI_STR_RX1]
-  connect_bd_intf_net -intf_net S_AXI_STR_RX2_1 [get_bd_intf_ports S_AXI_STR_RX2] [get_bd_intf_pins axis_clock_converter_2/S_AXIS]
+  if {$la_dma_wide} {
+    connect_bd_intf_net -intf_net S_AXI_STR_RX2_1 [get_bd_intf_ports S_AXI_STR_RX2] [get_bd_intf_pins axis_dwidth_converter_2/S_AXIS]
+    connect_bd_intf_net -intf_net axis_dwidth_converter_2_M_AXIS [get_bd_intf_pins axis_dwidth_converter_2/M_AXIS] [get_bd_intf_pins axis_clock_converter_2/S_AXIS]
+  } else {
+    connect_bd_intf_net -intf_net S_AXI_STR_RX2_1 [get_bd_intf_ports S_AXI_STR_RX2] [get_bd_intf_pins axis_clock_converter_2/S_AXIS]
+  }
   connect_bd_intf_net -intf_net S_AXI_STR_RX3_1 [get_bd_intf_ports S_AXI_STR_RX3] [get_bd_intf_pins axi_dma_3/S_AXIS_S2MM]
   connect_bd_intf_net -intf_net Vaux0_1 [get_bd_intf_ports Vaux0] [get_bd_intf_pins xadc/Vaux0]
   connect_bd_intf_net -intf_net Vaux1_1 [get_bd_intf_ports Vaux1] [get_bd_intf_pins xadc/Vaux1]
@@ -639,6 +662,10 @@ set M_AXI_STR_TX0_aclk [ create_bd_port -dir I -type clk -freq_hz $::logic_freq 
   connect_bd_net -net M_AXI_STR_TX2_arstn_1 [get_bd_ports M_AXI_STR_TX2_arstn] [get_bd_pins axis_clock_converter_6/m_axis_aresetn]
   connect_bd_net -net S_AXI_STR_RX2_aclk_1 [get_bd_ports S_AXI_STR_RX2_aclk] [get_bd_pins axis_clock_converter_2/s_axis_aclk]
   connect_bd_net -net S_AXI_STR_RX2_arstn_1 [get_bd_ports S_AXI_STR_RX2_arstn] [get_bd_pins axis_clock_converter_2/s_axis_aresetn]
+  if {$la_dma_wide} {
+    connect_bd_net [get_bd_ports S_AXI_STR_RX2_aclk] [get_bd_pins axis_dwidth_converter_2/aclk]
+    connect_bd_net [get_bd_ports S_AXI_STR_RX2_arstn] [get_bd_pins axis_dwidth_converter_2/aresetn]
+  }
   connect_bd_net -net axi_dma_0_mm2s_introut [get_bd_pins axi_dma_0/mm2s_introut] [get_bd_pins xlconcat_0/In1]
   connect_bd_net -net axi_dma_0_s2mm_introut [get_bd_pins axi_dma_0/s2mm_introut] [get_bd_pins xlconcat_0/In8]
   connect_bd_net -net axi_dma_1_mm2s_introut [get_bd_pins axi_dma_1/mm2s_introut] [get_bd_pins xlconcat_0/In3]
