@@ -114,7 +114,6 @@ set_max_delay -datapath_only 8.000 \
 # is captured by the AXI slave RDATA register in the controller clock domain.
 set_max_delay -datapath_only 8.000 -from [get_pins {sys_bus_interconnect/for_bus[*].inst_sys_bus_cdc/reg_rdata*[*]*/C}] -to [get_pins {ps/axi_slave_gp0/axi\\.RDATA_reg[*]/D}]
 set_max_delay -datapath_only 8.000 -from [get_pins i_hk/i_freq_meter/ref_gate_reg/C] -to [get_pins {i_hk/i_freq_meter/mes_gate_csff*[0]/D}]
-set_false_path -from [get_pins {adc_dat*[*][*]/C}] -to [get_pins {dac_dat_*[*]/D}]
 
 # constrain for clock capable line on E3, to preven loop test error
 create_clock -name e3_3i -period 4.000 [get_ports exp_e3*_i[3]]
