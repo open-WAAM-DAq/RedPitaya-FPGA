@@ -7,6 +7,14 @@ set_property LOC XADC_X0Y0 [get_cells i_ams/XADC_inst]
 # set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks adc_clk]
 # set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks par_clk]
 
+# The v0.94 122-16 ADC is an LTC2185 in full-rate CMOS mode.  It is
+# source-synchronous: data changes with CLKOUT+'s falling edge and is
+# captured on its rising edge.  The DATA-to-CLKOUT skew (tSKEW) is specified
+# from 0.0 ns to 0.6 ns.  Keep this board-specific constraint out of the
+# shared XDC because other projects can use a different ADC interface.
+set_input_delay -clock adc_clk -clock_fall -min 0.000 [get_ports adc_dat_i[*][*]]
+set_input_delay -clock adc_clk -clock_fall -max 0.600 [get_ports adc_dat_i[*][*]]
+
 ### SATA connector
 set_property IOSTANDARD DIFF_HSTL_I_18 [get_ports {daisy_p_o[*]}]
 set_property IOSTANDARD DIFF_HSTL_I_18 [get_ports {daisy_n_o[*]}]

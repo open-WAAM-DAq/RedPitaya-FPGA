@@ -127,7 +127,7 @@ if {$prj_name != "pyrpl"} {
    if {$prj_name == "stream_app"} {
       add_files -fileset constrs_1 $path_sdc_prj/red_pitaya_z20_adc.xdc
       set_property PROCESSING_ORDER LATE [get_files red_pitaya_z20_adc.xdc]
-   } else {
+   } elseif {$prj_name != "v0.94"} {
       add_files -fileset constrs_1 $path_sdc/red_pitaya_z20_adc_default.xdc
    }
 }
