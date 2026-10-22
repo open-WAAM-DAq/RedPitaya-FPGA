@@ -431,11 +431,18 @@ set M_AXI_STR_TX0_aclk [ create_bd_port -dir I -type clk -freq_hz $::logic_freq 
    CONFIG.c_sg_include_stscntrl_strm {0} \
    CONFIG.c_sg_length_width {23} \
  ] $axi_dma_2
-  if {[info exists ::la_dma_wide] && $::la_dma_wide} {
+  if {[info exists ::la_dma_bytes] && $::la_dma_bytes > 2} {
+    # the memory side is never narrower than the 32 bit it had
     set_property -dict [ list \
-     CONFIG.c_s_axis_s2mm_tdata_width {64} \
-     CONFIG.c_m_axi_s2mm_data_width {64} \
+     CONFIG.c_s_axis_s2mm_tdata_width [expr {8 * $::la_dma_bytes}] \
+     CONFIG.c_m_axi_s2mm_data_width [expr {max(32, 8 * $::la_dma_bytes)}] \
     ] $axi_dma_2
+    if {$::la_dma_bytes == 4} {
+      # 16 beat bursts as the other DMAs: with 64 the S2MM byte counters of the
+      # 32 bit stream left no margin at 125 MHz on the 7z010; 250 MB/s of the
+      # 500 MB/s the stream carries are needed
+      set_property CONFIG.c_s2mm_burst_size {16} $axi_dma_2
+    }
   }
 
   # Create instance: axi_dma_3, and set properties
@@ -522,15 +529,18 @@ set M_AXI_STR_TX0_aclk [ create_bd_port -dir I -type clk -freq_hz $::logic_freq 
   # Create instance: axis_clock_converter_2, and set properties
   set axis_clock_converter_2 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_clock_converter:1.1 axis_clock_converter_2 ]
 
-  # Wide LA stream (::la_dma_wide, 250-12): the LA writes 16 bit at the ADC
-  # rate, 500 MB/s at 250 MHz.  The DMA side (FCLK_CLK1) runs at 125 MHz as on
-  # the other boards, where a 16 bit stream would carry half of that, so the
-  # stream is widened to 64 bit before the clock converter.
-  set la_dma_wide [expr {[info exists ::la_dma_wide] && $::la_dma_wide}]
+  # LA stream width on the DMA side (::la_dma_bytes, default 2).  The LA writes
+  # 16 bit at the ADC rate and cannot wait (its TREADY is tied high in the top).
+  # With the DMA clock (FCLK_CLK1, 125 MHz) at or below that rate a 16 bit
+  # stream has no margin and every DMA stall is lost data, so the stream is
+  # widened before the clock converter to twice the LA rate: 4 bytes for the
+  # 125 MS/s boards, 8 for the 250-12.
+  set la_dma_bytes [expr {[info exists ::la_dma_bytes] ? $::la_dma_bytes : 2}]
+  set la_dma_wide [expr {$la_dma_bytes > 2}]
   if {$la_dma_wide} {
     set axis_dwidth_converter_2 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_dwidth_converter:1.1 axis_dwidth_converter_2 ]
     set_property -dict [ list \
-     CONFIG.M_TDATA_NUM_BYTES {8} \
+     CONFIG.M_TDATA_NUM_BYTES $la_dma_bytes \
     ] $axis_dwidth_converter_2
   }
 

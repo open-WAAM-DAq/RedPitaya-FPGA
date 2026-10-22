@@ -108,6 +108,9 @@ if {$prj_name == "logic"} {
    # AXI/DMA subsystem clock. Neither the 250 MHz default nor the project's
    # historical 142.857 MHz closes timing here.
    set ::clk1_freq 125000000
+   # The LA stream (16 bit at the ADC rate) goes to the DMA at 32 bit, twice
+   # its rate: at 16 bit it had no margin for a DMA stall.
+   set ::la_dma_bytes 4
 }
 
 set_property verilog_define [concat Z20_LL $prj_defs] [current_fileset]

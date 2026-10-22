@@ -104,7 +104,7 @@ if {$prj_name == "logic"} {
    # the HP ports missed timing by 0.65 ns.  The LA stream (16 bit at 250 MHz)
    # is widened to 64 bit in the ADC clock domain to keep its full rate.
    set ::clk1_freq 125000000
-   set ::la_dma_wide 1
+   set ::la_dma_bytes 8
 }
 
 set_property verilog_define [concat Z20_250 $prj_defs] [current_fileset]
