@@ -184,6 +184,13 @@ end else begin
       adc_dv_div <= 1'b0;
 end
 
+// The running sum is computed unconditionally and the restart selects after it.
+// Written as one expression, synthesis folds the restart into the adder inputs,
+// so the 17 bit count compare (dec_valid) and the 32 bit carry chain run in
+// series, which does not fit in the 4 ns of the 250 MHz clock.  `keep` holds the
+// sum apart; the selected value is the same.
+(* keep = "true" *) wire [32-1: 0] adc_sum_acc = $signed(adc_sum) + $signed(dec_dat_hres);
+
 always @(posedge adc_clk_i)
 if (adc_rstn_i == 1'b0) begin
    adc_sum   <= 32'h0 ;
@@ -196,7 +203,7 @@ end else begin
       adc_sum   <= $signed(dec_dat_hres) ;
    end else begin
       adc_dec_cnt <= adc_dec_cnt + 17'h1 ;
-      adc_sum   <= $signed(adc_sum) + $signed(dec_dat_hres) ;
+      adc_sum   <= adc_sum_acc ;
    end
 
    adc_dv  <= adc_dv_next;
