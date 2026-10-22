@@ -124,6 +124,9 @@ write_hwdef -force       -file    $path_sdk/red_pitaya.hwdef
 if {$prj_name != "pyrpl"} {
     add_files -fileset sources_1      ../../$path_rtl
     add_files -fileset constrs_1      $path_sdc/red_pitaya_G2.xdc
+    if {$prj_name != "v0.94"} {
+        add_files -fileset constrs_1 $path_sdc/red_pitaya_z20_14_adc_default.xdc
+    }
 }
 
 add_files -fileset sources_1 -norecurse $path_rtl_prj
