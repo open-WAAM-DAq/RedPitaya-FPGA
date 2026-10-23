@@ -432,10 +432,12 @@ set M_AXI_STR_TX0_aclk [ create_bd_port -dir I -type clk -freq_hz $::logic_freq 
    CONFIG.c_sg_length_width {23} \
  ] $axi_dma_2
   if {[info exists ::la_dma_bytes] && $::la_dma_bytes > 2} {
-    # the memory side is never narrower than the 32 bit it had
+    # The memory side at 64 bit, the width of the HP port. At 32 bit the S2MM wrote
+    # about 242 MB/s into memory on a 7z010 at 125 MHz, 3 % short of an LA input that
+    # changes every sample (measured on the bench: the 16 bit design lost as much).
     set_property -dict [ list \
      CONFIG.c_s_axis_s2mm_tdata_width [expr {8 * $::la_dma_bytes}] \
-     CONFIG.c_m_axi_s2mm_data_width [expr {max(32, 8 * $::la_dma_bytes)}] \
+     CONFIG.c_m_axi_s2mm_data_width {64} \
     ] $axi_dma_2
     if {$::la_dma_bytes == 4} {
       # 16 beat bursts as the other DMAs: with 64 the S2MM byte counters of the
