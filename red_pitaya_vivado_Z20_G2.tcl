@@ -100,6 +100,9 @@ if {$prj_name == "logic"} {
    # AXI/DMA subsystem clock. Neither the 250 MHz default nor the project's
    # historical 142.857 MHz closes timing here.
    set ::clk1_freq 125000000
+   # The LA stream (16 bit at the ADC rate) goes to the DMA at 32 bit, twice
+   # its rate: at 16 bit it had no margin for a DMA stall.
+   set ::la_dma_bytes 4
 }
 
 set_property verilog_define [concat Z20_G2 Z20_xx $prj_defs] [current_fileset]
@@ -124,6 +127,9 @@ write_hwdef -force       -file    $path_sdk/red_pitaya.hwdef
 if {$prj_name != "pyrpl"} {
     add_files -fileset sources_1      ../../$path_rtl
     add_files -fileset constrs_1      $path_sdc/red_pitaya_G2.xdc
+    if {$prj_name != "v0.94"} {
+        add_files -fileset constrs_1 $path_sdc/red_pitaya_z20_14_adc_default.xdc
+    }
 }
 
 add_files -fileset sources_1 -norecurse $path_rtl_prj

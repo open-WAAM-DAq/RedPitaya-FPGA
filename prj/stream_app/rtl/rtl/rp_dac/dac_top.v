@@ -241,7 +241,11 @@ assign event_sts_reset = 0;
 
 // This trigger belongs to the legacy DMA buffer-switch mechanism.  In the
 // trigger mode the same event starts playback in the clk_adc domain instead.
-assign ctl_trg = ~trigger_mode_axi_r2 & (event_trig_r2 | hw_trigger_axi_r2);
+// registered: it fans out to the address registers of both DMA channels at 200 MHz
+reg ctl_trg_r;
+always @(posedge clk_axi)
+  ctl_trg_r <= axi_rstn & ~trigger_mode_axi_r2 & (event_trig_r2 | hw_trigger_axi_r2);
+assign ctl_trg = ctl_trg_r;
 
 ////////////////////////////////////////////////////////////
 // Name : 

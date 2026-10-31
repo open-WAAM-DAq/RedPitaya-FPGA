@@ -160,10 +160,16 @@ end else begin
 end
 
 // control signals
-assign ctl_stp = bus.wen & (bus.addr[BAW-1:0]=='h00) & bus.wdata[3];  // acquire stop
-assign ctl_acq = bus.wen & (bus.addr[BAW-1:0]=='h00) & bus.wdata[2];  // acquire start
-assign trg_swo = bus.wen & (bus.addr[BAW-1:0]=='h00) & bus.wdata[1];  // trigger
-assign ctl_rst = bus.wen & (bus.addr[BAW-1:0]=='h00) & bus.wdata[0];  // reset
+// The control strobes are registered: decoded straight from the bus they put
+// the address compare in front of every counter and timestamp enable of the
+// acquisition, which did not fit at 250 MHz.  A write acts one clock later.
+always_ff @(posedge bus.clk)
+begin
+  ctl_stp <= bus.wen & (bus.addr[BAW-1:0]=='h00) & bus.wdata[3];  // acquire stop
+  ctl_acq <= bus.wen & (bus.addr[BAW-1:0]=='h00) & bus.wdata[2];  // acquire start
+  trg_swo <= bus.wen & (bus.addr[BAW-1:0]=='h00) & bus.wdata[1];  // trigger
+  ctl_rst <= bus.wen & (bus.addr[BAW-1:0]=='h00) & bus.wdata[0];  // reset
+end
 
 // read access
 always_ff @(posedge bus.clk)
@@ -240,7 +246,8 @@ assign std.TREADY = stn.TREADY;
 ////////////////////////////////////////////////////////////////////////////////
 
 la_trg #(
-  .DT (DT)
+  .DT (DT),
+  .LEVEL_ONLY (1)
 ) la_trg (
   // control
   .ctl_rst  (ctl_rst),

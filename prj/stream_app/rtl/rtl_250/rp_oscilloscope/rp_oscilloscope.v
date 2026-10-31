@@ -13,8 +13,13 @@ module rp_oscilloscope
     parameter ADC_DATA_BITS         = 14,
     parameter EVENT_SRC_NUM         = 7,
     parameter TRIG_SRC_NUM          = 7,
-    parameter NUM_CHANNELS          = 2)(
+    parameter NUM_CHANNELS          = 2,
+    // 1: the scope and its DMA run on the ADC clock (clk, m_axi_osc*_aclk) while the other
+    // blocks drive the event and trigger buses on bus_clk (Ti boards): the buses are carried across
+    parameter ASYNC_BUS             = 0,
+    parameter EN_FILTER             = 0)(
   input  wire                                   clk,
+  input  wire                                   bus_clk,  // trigger and event bus clock, only with ASYNC_BUS
   input  wire                                   rst_n,
   output wire                                   intr,
 
@@ -202,10 +207,17 @@ assign s_axis_osc_tdata[4*16-1:3*16] = adc_data_ch4_signed;
 */
 
 
-reg rstn_cfg;
+// rst_n comes from the AXI clock domain, and the 250-12 constraints false-path that crossing:
+// one synchronizer, so that both channels leave reset on the same clock (their ramps and
+// pipelines start together)
+(* ASYNC_REG = "TRUE" *) reg rstn_sync = 1'b0;
+(* keep = "true", max_fanout = 64 *) reg rstn_cfg;  // not merged with the resets of the channels
+(* keep = "true" *) reg rstn_osc;                   // the reset of the channels
 always @(posedge clk)
 begin
-  rstn_cfg <= rst_n;
+  rstn_sync <= rst_n;
+  rstn_cfg  <= rstn_sync;
+  rstn_osc  <= rstn_sync;
 end
 
 reg rstn_cfgax;
@@ -227,6 +239,67 @@ wire                        dma_mode;
 
 wire [             3-1:0]   cfg_event_sel;
 wire [             4-1:0]   cfg_event_op;
+
+////////////////////////////////////////////////////////////
+// Event and trigger buses. Bits: trigger {ext 5, la 4, osc2 3, osc1 2, gen2 1, gen1 0},
+// events {la 4, osc2 3, osc1 2, gen2 1, gen1 0}. With ASYNC_BUS the bits of the other
+// blocks come in on bus_clk and are carried to clk (a rising edge gives one pulse); the
+// scope's own bits are taken locally, so its own triggers keep their latency, and its
+// outputs are carried to bus_clk.
+////////////////////////////////////////////////////////////
+wire [TRIG_SRC_NUM-1:0]   trig_ip_l;
+wire [EVENT_SRC_NUM-1:0]  event_ip_trig_l, event_ip_stop_l, event_ip_start_l, event_ip_reset_l;
+wire                      osc1_trig_l, osc2_trig_l;
+
+generate
+if (ASYNC_BUS) begin : bus_cdc
+  genvar BI;
+  for (BI = 0; BI < TRIG_SRC_NUM; BI = BI + 1) begin : trig_in
+    if (BI == 2) begin : own1
+      assign trig_ip_l[BI] = osc1_trig_l;
+    end else if (BI == 3) begin : own2
+      assign trig_ip_l[BI] = osc2_trig_l;
+    end else begin : other
+      pulse_cdc i_cdc (.src_clk (bus_clk), .src_i (trig_ip[BI]), .dst_clk (clk), .dst_o (trig_ip_l[BI]));
+    end
+  end
+  for (BI = 0; BI < EVENT_SRC_NUM; BI = BI + 1) begin : event_in
+    if ((BI == 2) || (BI == 3)) begin : own
+      assign event_ip_trig_l[BI]  = cfg_event_op[0];
+      assign event_ip_stop_l[BI]  = cfg_event_op[1];
+      assign event_ip_start_l[BI] = cfg_event_op[2];
+      assign event_ip_reset_l[BI] = cfg_event_op[3];
+    end else begin : other
+      pulse_cdc i_trg (.src_clk (bus_clk), .src_i (event_ip_trig[BI]),  .dst_clk (clk), .dst_o (event_ip_trig_l[BI]));
+      pulse_cdc i_stp (.src_clk (bus_clk), .src_i (event_ip_stop[BI]),  .dst_clk (clk), .dst_o (event_ip_stop_l[BI]));
+      pulse_cdc i_sta (.src_clk (bus_clk), .src_i (event_ip_start[BI]), .dst_clk (clk), .dst_o (event_ip_start_l[BI]));
+      pulse_cdc i_rst (.src_clk (bus_clk), .src_i (event_ip_reset[BI]), .dst_clk (clk), .dst_o (event_ip_reset_l[BI]));
+    end
+  end
+  wire [3:0] event_op_bus;
+  for (BI = 0; BI < 4; BI = BI + 1) begin : event_out
+    pulse_cdc i_cdc (.src_clk (clk), .src_i (cfg_event_op[BI]), .dst_clk (bus_clk), .dst_o (event_op_bus[BI]));
+  end
+  pulse_cdc i_trig1 (.src_clk (clk), .src_i (osc1_trig_l), .dst_clk (bus_clk), .dst_o (osc1_trig_op));
+  pulse_cdc i_trig2 (.src_clk (clk), .src_i (osc2_trig_l), .dst_clk (bus_clk), .dst_o (osc2_trig_op));
+  assign osc1_event_op = event_op_bus;
+  assign osc2_event_op = event_op_bus;
+  assign osc3_event_op = event_op_bus;
+  assign osc4_event_op = event_op_bus;
+end else begin : bus_direct
+  assign trig_ip_l        = trig_ip;
+  assign event_ip_trig_l  = event_ip_trig;
+  assign event_ip_stop_l  = event_ip_stop;
+  assign event_ip_start_l = event_ip_start;
+  assign event_ip_reset_l = event_ip_reset;
+  assign osc1_trig_op     = osc1_trig_l;
+  assign osc2_trig_op     = osc2_trig_l;
+  assign osc1_event_op    = cfg_event_op;
+  assign osc2_event_op    = cfg_event_op;
+  assign osc3_event_op    = cfg_event_op;
+  assign osc4_event_op    = cfg_event_op;
+end
+endgenerate
 wire [             4-1:0]   cfg_event_sts;
 wire [TRIG_SRC_NUM-1:0]     cfg_trig_mask;
 
@@ -244,6 +317,7 @@ wire [S_AXIS_DATA_BITS-1:0] cfg_trig_low_level;
 wire [S_AXIS_DATA_BITS-1:0] cfg_trig_high_level;
 wire                        cfg_trig_edge;
 wire                        cfg_trigger_mode;
+wire [              16-1:0] cfg_trig_blocks;
 wire                        trig_mod_op;
 
 wire                        cfg_avg_en; 
@@ -274,6 +348,7 @@ wire                        cfg_timestamp_init_we;
 wire [31:0]                 cfg_dma_sts;
 reg                         timestamp_init_toggle_axi;
 reg  [1:0]                  timestamp_init_toggle_adc;
+reg                         timestamp_load_adc;  // the init value arrived: load it next clock
 reg  [63:0]                 cfg_timestamp_init_adc1;
 reg  [63:0]                 cfg_timestamp_init_adc2;
 reg  [63:0]                 timestamp_counter_adc;
@@ -284,6 +359,8 @@ wire                        cfg_8bit_dat;
 wire                        cfg_legacy_calib;
 
 wire [16-1:0]               cfg_calib_offset_ch1;
+wire [4*64-1:0]             buf1_lost;
+wire [4*64-1:0]             buf2_lost;
 wire [16-1:0]               cfg_calib_gain_ch1;
 wire [16-1:0]               cfg_calib_offset_ch2;
 wire [16-1:0]               cfg_calib_gain_ch2;
@@ -321,6 +398,20 @@ wire [4*32-1:0]             diag2;
 wire [4*32-1:0]             diag3;
 wire [4*32-1:0]             diag4;
 */
+
+// the triggers taken by CH1 (all channels take the same ones)
+// registered: the trigger comes straight from the trigger sources (timing at 250 MHz)
+reg  sts_trig_taken;
+always @(posedge clk)
+  sts_trig_taken <= cfg_trigger_mode & trig_out1;
+
+genvar GL;
+generate
+  for (GL = NUM_CHANNELS; GL < 4; GL = GL + 1) begin : no_lost
+    assign buf1_lost[(GL+1)*64-1:GL*64] = 64'd0;
+    assign buf2_lost[(GL+1)*64-1:GL*64] = 64'd0;
+  end
+endgenerate
 
 wire [S_AXIS_DATA_BITS-1:0] calib_tdata;   
 wire [S_AXIS_DATA_BITS-1:0] calib_datain;    
@@ -379,13 +470,16 @@ begin
     cfg_timestamp_init_adc1   <= 64'd0;
     cfg_timestamp_init_adc2   <= 64'd0;
     timestamp_init_toggle_adc <= 2'b00;
+    timestamp_load_adc        <= 1'b0;
     timestamp_counter_adc     <= 64'd0;
   end else begin
     cfg_timestamp_init_adc1   <= cfg_timestamp_init;
     cfg_timestamp_init_adc2   <= cfg_timestamp_init_adc1;
     timestamp_init_toggle_adc <= {timestamp_init_toggle_adc[0], timestamp_init_toggle_axi};
+    // registered load strobe (timing at 250 MHz); the init value is stable by then
+    timestamp_load_adc        <= timestamp_init_toggle_adc[1] != timestamp_init_toggle_adc[0];
 
-    if (timestamp_init_toggle_adc[1] != timestamp_init_toggle_adc[0])
+    if (timestamp_load_adc)
       timestamp_counter_adc <= cfg_timestamp_init_adc2;
     else
       timestamp_counter_adc <= timestamp_counter_adc + 64'd1;
@@ -403,10 +497,6 @@ begin
   end
 end
 
-assign osc1_event_op = cfg_event_op;
-assign osc2_event_op = cfg_event_op;
-assign osc3_event_op = cfg_event_op;
-assign osc4_event_op = cfg_event_op;
 /*
 assign osc1_trig_op  = osc_trig_op[0];
 assign osc2_trig_op  = osc_trig_op[1];
@@ -492,7 +582,9 @@ scope_cfg #(
   .cfg_trig_high_level_o    (cfg_trig_high_level),
   .cfg_trig_edge_o          (cfg_trig_edge),
   .cfg_trigger_mode_o       (cfg_trigger_mode),
+  .cfg_trig_blocks_o        (cfg_trig_blocks),
   .sts_armed_i              (sts_armed),
+  .sts_trig_taken_i         (sts_trig_taken),
 
   .cfg_dec_factor_o         (cfg_dec_factor),
   .cfg_dec_rshift_o         (cfg_dec_rshift),
@@ -557,6 +649,8 @@ scope_cfg #(
   .buf2_timestamp_ch1_i     (buf2_timestamp_ch1),
   .buf1_timestamp_ch2_i     (buf1_timestamp_ch2),
   .buf2_timestamp_ch2_i     (buf2_timestamp_ch2),
+  .buf1_lost_i              (buf1_lost),
+  .buf2_lost_i              (buf2_lost),
 
   .curr_wp_ch1_i            (curr_wp_ch1),
   .curr_wp_ch2_i            (curr_wp_ch2),
@@ -585,19 +679,21 @@ scope_cfg #(
   .TRIG_CNT_BITS    (TRIG_CNT_BITS),
   .DEC_CNT_BITS     (DEC_CNT_BITS),
   .DEC_SHIFT_BITS   (DEC_SHIFT_BITS),
-  .CHAN_NUM         (1))
+  .CHAN_NUM         (1),
+  .EN_FILTER        (EN_FILTER))
   U_osc1(
   .clk_axi          (m_axi_osc1_aclk),   
   .clk_adc          (clk),   
+  .cfg_trig_blocks_i        (cfg_trig_blocks),
   .axi_rstn         (m_axi_osc1_aresetn), 
-  .adc_rstn         (rst_n), 
+  .adc_rstn         (rstn_osc), 
   .s_axis_tdata     (s_axis_osc1_tdata), 
   .s_axis_tvalid    (1'b1),
 
-  .event_ip_trig    (event_ip_trig),  
-  .event_ip_stop    (event_ip_stop),  
-  .event_ip_start   (event_ip_start), 
-  .event_ip_reset   (event_ip_reset),  
+  .event_ip_trig    (event_ip_trig_l),  
+  .event_ip_stop    (event_ip_stop_l),  
+  .event_ip_start   (event_ip_start_l), 
+  .event_ip_reset   (event_ip_reset_l),  
 
   .event_sts_o      (cfg_event_sts),
   .event_sel_i      (cfg_event_sel),
@@ -621,6 +717,8 @@ scope_cfg #(
   .cfg_hres_en_i            (cfg_hres_en),
   .cfg_loopback_i           ({cfg_loopback[8],1'b0,cfg_loopback[0]}),
   .cfg_8bit_dat_i           (cfg_8bit_dat),
+  .buf1_lost_o              (buf1_lost[1*64-1:0*64]),
+  .buf2_lost_o              (buf2_lost[1*64-1:0*64]),
   .cfg_legacy_calib_i       (cfg_legacy_calib),
   .cfg_calib_offset_i       (cfg_calib_offset_ch1),
   .cfg_calib_gain_i         (cfg_calib_gain_ch1),
@@ -636,7 +734,7 @@ scope_cfg #(
   .cfg_dma_buf_size_i       (cfg_dma_buf_size),
   .cfg_dma_ctrl_i           (cfg_dma_ctrl),
   .cfg_dma_ctrl_we_i        (cfg_dma_ctrl_we),
-  .cfg_timestamp_counter_i  (timestamp_counter_axi_r2),
+  .cfg_timestamp_counter_i  (timestamp_counter_adc),  // the DMA stamps the bursts in the stream domain
   .cfg_timestamp_init_i     (cfg_timestamp_init),
   .cfg_timestamp_init_we_i  (cfg_timestamp_init_we),
 
@@ -652,8 +750,8 @@ scope_cfg #(
   .diag3_o                  (diag3_ch1),
   .diag4_o                  (diag4_ch1),
 
-  .trig_ip          (trig_ip),
-  .trig_op          (osc1_trig_op),  
+  .trig_ip          (trig_ip_l),
+  .trig_op          (osc1_trig_l),  
   .trig_o           (trig_out1),
   .ctl_rst          (),
 
@@ -692,19 +790,20 @@ osc_top #(
   .TRIG_CNT_BITS    (TRIG_CNT_BITS),
   .DEC_CNT_BITS     (DEC_CNT_BITS),
   .DEC_SHIFT_BITS   (DEC_SHIFT_BITS),
-  .CHAN_NUM         ())
+  .CHAN_NUM         (),
+  .EN_FILTER        (EN_FILTER))
   U_osc2(
   .clk_axi          (m_axi_osc1_aclk),   
   .clk_adc          (clk),   
   .axi_rstn         (m_axi_osc2_aresetn), 
-  .adc_rstn         (rst_n), 
+  .adc_rstn         (rstn_osc), 
   .s_axis_tdata     (s_axis_osc2_tdata), 
   .s_axis_tvalid    (1'b1),
 
-  .event_ip_trig    (event_ip_trig),  
-  .event_ip_stop    (event_ip_stop),  
-  .event_ip_start   (event_ip_start), 
-  .event_ip_reset   (event_ip_reset), 
+  .event_ip_trig    (event_ip_trig_l),  
+  .event_ip_stop    (event_ip_stop_l),  
+  .event_ip_start   (event_ip_start_l), 
+  .event_ip_reset   (event_ip_reset_l), 
 
   .event_sel_i      (cfg_event_sel),
   .trig_mask_i      (cfg_trig_mask),
@@ -715,6 +814,7 @@ osc_top #(
   .cfg_trig_high_level_i    (cfg_trig_high_level),
   .cfg_trig_edge_i          (cfg_trig_edge),
   .cfg_trigger_mode_i       (cfg_trigger_mode),
+  .cfg_trig_blocks_i        (cfg_trig_blocks),
   .sts_armed_o              (adc_armed_ch2),
 
   .cfg_dec_factor_i         (cfg_dec_factor),
@@ -738,7 +838,7 @@ osc_top #(
   .cfg_dma_buf_size_i       (cfg_dma_buf_size),
   .cfg_dma_ctrl_i           (cfg_dma_ctrl),
   .cfg_dma_ctrl_we_i        (cfg_dma_ctrl_we),
-  .cfg_timestamp_counter_i  (timestamp_counter_axi_r2),
+  .cfg_timestamp_counter_i  (timestamp_counter_adc),  // the DMA stamps the bursts in the stream domain
   .cfg_timestamp_init_i     (cfg_timestamp_init),
   .cfg_timestamp_init_we_i  (cfg_timestamp_init_we),
 
@@ -746,11 +846,13 @@ osc_top #(
   .buf2_ms_cnt_o            (buf2_ms_cnt_ch2),
   .buf1_timestamp_o         (buf1_timestamp_ch2),
   .buf2_timestamp_o         (buf2_timestamp_ch2),
+  .buf1_lost_o              (buf1_lost[2*64-1:1*64]),
+  .buf2_lost_o              (buf2_lost[2*64-1:1*64]),
 
   .curr_wp_o                (curr_wp_ch2),
 
-  .trig_ip          (trig_ip),
-  .trig_op          (osc2_trig_op),  
+  .trig_ip          (trig_ip_l),
+  .trig_op          (osc2_trig_l),  
   .trig_o           (trig_out2),
   .ctl_rst          (),
 
@@ -802,7 +904,7 @@ osc_top #(
   .clk_axi          (m_axi_osc1_aclk),   
   .clk_adc          (clk),   
   .axi_rstn         (m_axi_osc1_aresetn), 
-  .adc_rstn         (rst_n), 
+  .adc_rstn         (rstn_osc), 
   .s_axis_tdata     (s_axis_osc_tdata[1*16-1:0*16]), 
   .s_axis_tvalid    (1'b1),
 
@@ -998,4 +1100,28 @@ assign m_axi_osc4_bresp   = m_axi_osc_bresp[1*2-1:0*2];
 assign m_axi_osc4_bvalid  = m_axi_osc_bvalid[0];
 assign m_axi_osc4_bready  = m_axi_osc_bready[0];
 */
+endmodule
+
+////////////////////////////////////////////////////////////
+// One pulse in dst_clk for every rising edge of src_i (a toggle crosses through three
+// registers). Edges must be at least three dst_clk periods apart.
+////////////////////////////////////////////////////////////
+module pulse_cdc (
+  input  wire src_clk,
+  input  wire src_i,
+  input  wire dst_clk,
+  output reg  dst_o
+);
+reg src_d = 1'b0;
+reg tgl   = 1'b0;
+(* ASYNC_REG = "TRUE" *) reg [2:0] sync = 3'b0;
+always @(posedge src_clk) begin
+  src_d <= src_i;
+  if (src_i & ~src_d)
+    tgl <= ~tgl;
+end
+always @(posedge dst_clk) begin
+  sync  <= {sync[1:0], tgl};
+  dst_o <= sync[2] ^ sync[1];
+end
 endmodule

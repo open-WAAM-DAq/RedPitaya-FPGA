@@ -41,6 +41,8 @@ wire signed [AXIS_DATA_BITS-1:0]  gain_calc_limit;
 
 reg                               s_axis_tvalid_p1;
 reg                               s_axis_tvalid_p2;
+reg                               s_axis_tvalid_p3;
+reg  signed [AXIS_DATA_BITS-1:0]  offset_lim_r;  // registered before the multiplier (timing at 250 MHz)
 
 
 ////////////////////////////////////////////////////////////
@@ -77,10 +79,12 @@ end
 always @(posedge clk)
 begin
   if (rst_n == 1'b0) begin
+    offset_lim_r <= 'h0;
     gain_calc_r <= 'h0;
     gain_calc   <= 'h0;
   end else begin
-    gain_calc_r <= $signed({offset_calc_limit,{15{1'b0}}}) * $signed({{15{1'b0}},gain});
+    offset_lim_r <= offset_calc_limit;
+    gain_calc_r <= $signed({offset_lim_r,{15{1'b0}}}) * $signed({{15{1'b0}},gain});
     gain_calc   <= gain_calc_r; // output of multiplier needs to be registered to avoid timing issues
   end
 end
@@ -131,11 +135,13 @@ begin
   if (rst_n == 1'b0) begin
     s_axis_tvalid_p1  <= 1'b0;
     s_axis_tvalid_p2  <= 1'b0;
+    s_axis_tvalid_p3  <= 1'b0;
     m_axis_tvalid     <= 1'b0;   
   end else begin
     s_axis_tvalid_p1  <= s_axis_tvalid;
     s_axis_tvalid_p2  <= s_axis_tvalid_p1;
-    m_axis_tvalid     <= s_axis_tvalid_p2;   
+    s_axis_tvalid_p3  <= s_axis_tvalid_p2;
+    m_axis_tvalid     <= s_axis_tvalid_p3;   
   end
 end
 

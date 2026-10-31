@@ -37,6 +37,7 @@ module osc_top
   input  wire [S_AXIS_DATA_BITS-1:0]      cfg_trig_high_level_i   ,
   input  wire                             cfg_trig_edge_i         ,
   input  wire                             cfg_trigger_mode_i      ,
+  input  wire [              16-1:0]      cfg_trig_blocks_i       ,
   output wire                             sts_armed_o             ,
 
   input  wire [    DEC_CNT_BITS-1:0]      cfg_dec_factor_i        ,
@@ -70,6 +71,8 @@ module osc_top
   output wire [              32-1:0]      buf2_ms_cnt_o           ,
   output wire [              64-1:0]      buf1_timestamp_o        ,
   output wire [              64-1:0]      buf2_timestamp_o        ,
+  output wire [              64-1:0]      buf1_lost_o             ,
+  output wire [              64-1:0]      buf2_lost_o             ,
 
   output wire [              32-1:0]      curr_wp_o               ,
   output wire [              32-1:0]      diag1_o                 ,
@@ -122,6 +125,10 @@ wire                        event_sts_start;
 wire                        event_sts_reset;
 wire                        ctl_trg;
 wire                        accepted_trigger;
+wire                        trig_taken;
+wire                        acq_drop;
+// one DMA buffer in samples: the blocks of the block mode end on buffer boundaries
+wire [              32-1:0] block_samples = cfg_8bit_dat_i ? cfg_dma_buf_size_i : {1'b0, cfg_dma_buf_size_i[32-1:1]};
 
 wire [31:0]                 cfg_dma_diags;
 
@@ -217,7 +224,10 @@ begin
     dec_test <= dec_tdata;
 end
 
-assign external_trig_val = trig_ip[5] & (trig_mask_i == 'h20);
+// The daisy chain slave starts its DMA on the external trigger when that is its only source.
+// In the trigger mode the external trigger only starts the writing (osc_acquire): a DMA
+// restart there would leave the wait without writing anything.
+assign external_trig_val = trig_ip[5] & (trig_mask_i == 'h20) & ~cfg_trigger_mode_i;
 
 assign ramp_en       = cfg_loopback_i[2];
 assign loopback_gpio = cfg_loopback_i[1];
@@ -388,6 +398,8 @@ osc_acquire #(
   .ctl_stop               (event_num_stop),
   .ctl_trig               (ctl_trg),
   .cfg_trigger_mode       (cfg_trigger_mode_i),
+  .cfg_trig_blocks        (cfg_trig_blocks_i),
+  .cfg_block_samples      (block_samples),
   .cfg_mode               (dma_mode),
   .cfg_trig_pre_samp      (cfg_trig_pre_samp_i),  
   .cfg_trig_post_samp     (cfg_trig_post_samp_i),   
@@ -399,7 +411,9 @@ osc_acquire #(
   .sts_trig_post_cnt      (sts_trig_post_cnt_o),
   .sts_trig_post_overflow (sts_trig_post_overflow_o),
   .sts_armed              (sts_armed_o),
-  .accepted_trigger       (accepted_trigger));
+  .accepted_trigger       (accepted_trigger),
+  .sts_drop               (acq_drop),
+  .trig_taken             (trig_taken));
   
 ////////////////////////////////////////////////////////////
 // Name : DMA S2MM
@@ -435,6 +449,10 @@ rp_dma_s2mm #(
   .buf2_ms_cnt    (buf2_ms_cnt_o),
   .buf1_timestamp (buf1_timestamp_o),
   .buf2_timestamp (buf2_timestamp_o),
+  .s_axis_drop    (acq_drop),
+  .s_axis_flush   (sts_armed_o),
+  .buf1_lost      (buf1_lost_o),
+  .buf2_lost      (buf2_lost_o),
   .buf_sel_in     (buf_sel_in),
   .buf_sel_out    (buf_sel_out),
   .m_axi_awaddr   (m_axi_awaddr), 
@@ -477,5 +495,5 @@ assign ctl_rst = event_num_reset;
 assign event_sts_reset = 0;
 
 assign ctl_trg = event_num_trig | |(trig_ip & trig_mask_i);
-assign trig_o  = cfg_trigger_mode_i ? accepted_trigger : ctl_start_o;
+assign trig_o  = cfg_trigger_mode_i ? trig_taken : ctl_start_o;
 endmodule

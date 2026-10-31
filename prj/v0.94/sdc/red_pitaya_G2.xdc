@@ -7,6 +7,14 @@ set_property LOC XADC_X0Y0 [get_cells i_ams/XADC_inst]
 # set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks adc_clk]
 # set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks par_clk]
 
+# The v0.94 125-14 Z7020 ADC is an LTC2145-14 in full-rate CMOS mode.  It is
+# source-synchronous: data changes with CLKOUT+'s falling edge and is
+# captured on its rising edge.  The DATA-to-CLKOUT skew (tD - tC) is
+# specified from 0.0 ns to 0.6 ns.  Keep this board-specific constraint out
+# of the shared XDC because other projects can use a different ADC interface.
+set_input_delay -clock adc_clk -clock_fall -min 0.000 [get_ports adc_dat_i[*][*]]
+set_input_delay -clock adc_clk -clock_fall -max 0.600 [get_ports adc_dat_i[*][*]]
+
 ### SATA connector
 set_property IOSTANDARD DIFF_HSTL_I_18 [get_ports {daisy*[*]}]
 
@@ -106,7 +114,6 @@ set_max_delay -datapath_only 8.000 \
 # is captured by the AXI slave RDATA register in the controller clock domain.
 set_max_delay -datapath_only 8.000 -from [get_pins {sys_bus_interconnect/for_bus[*].inst_sys_bus_cdc/reg_rdata*[*]*/C}] -to [get_pins {ps/axi_slave_gp0/axi\\.RDATA_reg[*]/D}]
 set_max_delay -datapath_only 8.000 -from [get_pins i_hk/i_freq_meter/ref_gate_reg/C] -to [get_pins {i_hk/i_freq_meter/mes_gate_csff*[0]/D}]
-set_false_path -from [get_pins {adc_dat*[*][*]/C}] -to [get_pins {dac_dat_*[*]/D}]
 
 # constrain for clock capable line on E3, to preven loop test error
 create_clock -name e3_3i -period 4.000 [get_ports exp_e3*_i[3]]

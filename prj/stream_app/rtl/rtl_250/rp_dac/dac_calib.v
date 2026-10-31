@@ -61,18 +61,21 @@ reg signed  [  MULT_BITS-1: 0] dac_mult  ;
 reg signed  [  SUM_BITS -1: 0] dac_sum   ;
 
 reg signed  [  MULT_BITS-1: 0] dac_mult_r  ;
+reg         [ AXIS_DATA_BITS-1: 0] dac_rdata_r;  // registered before the multiplier (timing at 250 MHz)
 reg signed  [  SUM_BITS -1: 0] dac_sum_r   ;
 // scale and offset
 always @(posedge dac_clk_i)
 begin
    if (!dac_rstn_i) begin
+      dac_rdata_r <= 'h0;
       dac_mult_r <= 'h0;
       dac_mult   <= 'h0;
       dac_sum_r  <= 'h0;
       dac_sum    <= 'h0;
       dac_o      <= 'h0;
    end else begin
-      dac_mult_r <= $signed(dac_rdata_i) * $signed({1'b0,set_amp_i}) ;
+      dac_rdata_r <= dac_rdata_i;
+      dac_mult_r <= $signed(dac_rdata_r) * $signed({1'b0,set_amp_i}) ;
       dac_mult   <= dac_mult_r;
       dac_sum_r  <= $signed(dac_mult[MULT_BITS-1:MULT_BITS-AXIS_DATA_BITS-1]) + $signed(set_dc_i) ;
       dac_sum    <= dac_sum_r;

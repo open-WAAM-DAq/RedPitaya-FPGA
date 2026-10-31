@@ -34,6 +34,9 @@ module gpio_dma_mm2s
   output [32-1:0]                       diag_reg,
   output [32-1:0]                       diag_reg2,
   input  wire                           gpio_rready_i,
+  input  wire                           trigger_mode_i,
+  input  wire                           trigger_i,
+  output wire                           armed_o,
   // 
   output wire [3:0]                       m_axi_arid_o     , // read address ID
   output wire [AXI_ADDR_BITS-1: 0]        m_axi_araddr_o   , // read address
@@ -59,13 +62,21 @@ module gpio_dma_mm2s
 ////////////////////////////////////////////////////////////
 
 localparam FIFO_CNT_BITS = 10;  // Size of the FIFO data counter
-localparam FIFO_MAX      = (1<<FIFO_CNT_BITS)-2-64;
+localparam FIFO_DEPTH    = 512; // fifo_axi_data, 64 bit words
+localparam FIFO_MAX      = FIFO_DEPTH-2-64;
 
 ////////////////////////////////////////////////////////////
 // Signals
 ////////////////////////////////////////////////////////////
 
 wire                      fifo_rst;
+wire                      dma_idle;
+reg  [3:0]                fifo_rst_sr;
+// the FIFO and the downsizer restart empty on every start (4 clock reset as in the DAC),
+// and stay in reset while stopped, so a stop ends the output at once
+wire                      fifo_reset = ~aresetn | dma_idle | (|fifo_rst_sr);
+always @(posedge m_axi_aclk)
+  fifo_rst_sr <= {fifo_rst_sr[2:0], fifo_rst};
 wire [AXI_DATA_BITS-1:0]  fifo_wr_data; 
 wire                      fifo_wr_we;
 wire [AXI_DATA_BITS-1:0]  fifo_rd_data;
@@ -73,6 +84,7 @@ wire                      fifo_rd_re;
 wire                      fifo_empty;
 wire                      fifo_full;
 wire [FIFO_CNT_BITS-1:0]  fifo_rd_cnt;
+wire [FIFO_CNT_BITS-1:0]  fifo_wr_cnt;
 wire                      fifo_almost_full = fifo_wr_cnt > FIFO_MAX;
 
 
@@ -139,6 +151,7 @@ gpio_dma_mm2s_ctrl #(
   .dac_trig         (dac_trig),
   .dac_ctrl_reg     (dac_ctrl_reg),
   .fifo_rst         (fifo_rst),
+  .idle_o           (dma_idle),
   .fifo_full        (fifo_full | fifo_almost_full),   
   .fifo_re          ((fifo_rd_re | fifo_empty)),  
   .m_axi_dac_araddr_o   (m_axi_araddr_o),       
@@ -160,14 +173,17 @@ gpio_dma_mm2s_downsize #(
   .AXI_BURST_LEN  (AXI_BURST_LEN))
   U_dma_mm2s_downsize(
   .clk            (s_axis_aclk),              
-  .rst            (aresetn ),        
+  .rst            (~fifo_reset),
   .fifo_empty     (fifo_empty),
   .fifo_full      (fifo_full | fifo_almost_full),
   .fifo_rd_data   (fifo_rd_data),          
   .fifo_rd_re     (fifo_rd_re),    
   .m_axis_tdata   (downsized_data),      
   .m_axis_tvalid  (downsized_valid),
-  .m_axis_tready  (gpio_rready_i ));         
+  .m_axis_tready  (gpio_rready_i ),
+  .trigger_mode_i (trigger_mode_i),
+  .trigger_i      (trigger_i),
+  .armed_o        (armed_o));         
 
 
 ////////////////////////////////////////////////////////////
@@ -180,7 +196,7 @@ fifo_axi_data
   U_fifo_axi_data(
   .wr_clk         (m_axi_aclk),               
   .rd_clk         (s_axis_aclk),               
-  .rst            (~aresetn),     
+  .rst            (fifo_reset),
   .din            (fifo_wr_data),                                 
   .wr_en          (fifo_wr_we),            
   .full           (fifo_full),   

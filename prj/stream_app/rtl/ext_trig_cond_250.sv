@@ -16,23 +16,25 @@ module ext_trig_cond_250 (
   output logic        sys_ack
 );
 
-logic       condition_enable;
-logic       edge_select;
-logic       debounce_enable;
-logic [7:0] debounce_len;
+logic        condition_enable;
+logic        edge_select;
+logic        debounce_enable;
+logic [15:0] debounce_len;
+logic        sim_enable;   // a register level replaces the trigger input
+logic        sim_level;
 logic       trig_level;
 logic       trig_rise;
 logic       trig_fall;
 
 debounce #(
-  .CW (8),
+  .CW (16),
   .DI (1'b0)
 ) i_debounce (
   .clk  (clk),
   .rstn (rstn),
   .ena  (condition_enable && debounce_enable),
   .len  (debounce_len),
-  .d_i  (trig_i),
+  .d_i  (sim_enable ? sim_level : trig_i),
   .d_o  (trig_level),
   .d_p  (trig_rise),
   .d_n  (trig_fall)
@@ -43,20 +45,24 @@ always_ff @(posedge clk) begin
     condition_enable <= 1'b0;
     edge_select      <= 1'b0;
     debounce_enable  <= 1'b0;
-    debounce_len     <= 8'h00;
+    debounce_len     <= 16'h0000;
+    sim_enable       <= 1'b0;
+    sim_level        <= 1'b0;
   end else if (sys_wen && (sys_addr[19:0] == 20'h00068)) begin
     condition_enable <= sys_wdata[0];
     edge_select      <= sys_wdata[1];
     debounce_enable  <= sys_wdata[2];
-    debounce_len     <= sys_wdata[15:8];
+    sim_enable       <= sys_wdata[4];
+    sim_level        <= sys_wdata[5];
+    debounce_len     <= sys_wdata[31:16];
   end
 end
 
 always_comb begin
   sys_rdata = 32'h00000000;
   if (sys_addr[19:0] == 20'h00068)
-    sys_rdata = {16'h0000, debounce_len, 5'h00,
-                 debounce_enable, edge_select, condition_enable};
+    sys_rdata = {debounce_len, 10'h000, sim_level, sim_enable,
+                 1'b0, debounce_enable, edge_select, condition_enable};
   sys_ack = sys_wen | sys_ren;
   sys_err = 1'b0;
 end

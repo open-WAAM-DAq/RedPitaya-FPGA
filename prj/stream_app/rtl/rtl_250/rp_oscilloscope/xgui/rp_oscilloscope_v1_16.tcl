@@ -4,6 +4,8 @@ proc init_gui { IPINST } {
   #Adding Page
   set Page_0 [ipgui::add_page $IPINST -name "Page 0"]
   ipgui::add_param $IPINST -name "ADC_DATA_BITS" -parent ${Page_0}
+  ipgui::add_param $IPINST -name "ASYNC_BUS" -parent ${Page_0}
+  ipgui::add_param $IPINST -name "EN_FILTER" -parent ${Page_0}
   ipgui::add_param $IPINST -name "EVENT_SRC_NUM" -parent ${Page_0}
   ipgui::add_param $IPINST -name "M_AXI_OSC1_ADDR_BITS" -parent ${Page_0}
   ipgui::add_param $IPINST -name "M_AXI_OSC1_DATA_BITS" -parent ${Page_0}
@@ -198,3 +200,31 @@ proc update_MODELPARAM_VALUE.NUM_CHANNELS { MODELPARAM_VALUE.NUM_CHANNELS PARAM_
 	set_property value [get_property value ${PARAM_VALUE.NUM_CHANNELS}] ${MODELPARAM_VALUE.NUM_CHANNELS}
 }
 
+
+proc update_PARAM_VALUE.ASYNC_BUS { PARAM_VALUE.ASYNC_BUS } {
+	# Procedure called to update ASYNC_BUS when any of the dependent parameters in the arguments change
+}
+
+proc validate_PARAM_VALUE.ASYNC_BUS { PARAM_VALUE.ASYNC_BUS } {
+	# Procedure called to validate ASYNC_BUS
+	return true
+}
+
+proc update_MODELPARAM_VALUE.ASYNC_BUS { MODELPARAM_VALUE.ASYNC_BUS PARAM_VALUE.ASYNC_BUS } {
+	# Procedure called to set VHDL generic/Verilog parameter value(s) based on TCL parameter value
+	set_property value [get_property value ${PARAM_VALUE.ASYNC_BUS}] ${MODELPARAM_VALUE.ASYNC_BUS}
+}
+
+proc update_PARAM_VALUE.EN_FILTER { PARAM_VALUE.EN_FILTER } {
+	# Procedure called to update EN_FILTER when any of the dependent parameters in the arguments change
+}
+
+proc validate_PARAM_VALUE.EN_FILTER { PARAM_VALUE.EN_FILTER } {
+	# Procedure called to validate EN_FILTER
+	return true
+}
+
+proc update_MODELPARAM_VALUE.EN_FILTER { MODELPARAM_VALUE.EN_FILTER PARAM_VALUE.EN_FILTER } {
+	# Procedure called to set VHDL generic/Verilog parameter value(s) based on TCL parameter value
+	set_property value [get_property value ${PARAM_VALUE.EN_FILTER}] ${MODELPARAM_VALUE.EN_FILTER}
+}

@@ -232,6 +232,15 @@ generate
 if (EN_LIN) begin: en_lin
 
   axi4_stream_if #(.DN (DN), .DT (DT)) str (.ACLK (sto.ACLK), .ARESETn (sto.ARESETn));
+  axi4_stream_if #(.DN (DN), .DT (DT)) stm (.ACLK (sto.ACLK), .ARESETn (sto.ARESETn));
+
+  // The buffer BRAM has no output register and fed the multiplier directly,
+  // which does not fit at 250 MHz.  One stream register in between; the
+  // generator output is one clock later.
+  axi4_stream_reg mul_reg (
+    .sti       (stg),
+    .sto       (stm)
+  );
 
   lin_mul #(
     .DN  (DN),
@@ -240,7 +249,7 @@ if (EN_LIN) begin: en_lin
     .DTM (logic signed [16-1:0])
   ) lin_mul (
     // stream input/output
-    .sti       (stg),
+    .sti       (stm),
     .sto       (str),
     // configuration
     .cfg_mul   (cfg_mul)

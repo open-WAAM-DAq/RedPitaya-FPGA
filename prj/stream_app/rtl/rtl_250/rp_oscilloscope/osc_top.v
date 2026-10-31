@@ -9,7 +9,8 @@ module osc_top
     parameter TRIG_CNT_BITS     = 32, // Trigger counter bits
     parameter EVENT_SRC_NUM     = 1,  // Number of event sources
     parameter TRIG_SRC_NUM      = 1, // Number of trigger sources
-    parameter CHAN_NUM          = 1)( // which channel
+    parameter CHAN_NUM          = 1,  // which channel
+    parameter EN_FILTER         = 0)( // build the equalization filter
   input wire                              clk_axi,
   input wire                              clk_adc,
   input wire                              axi_rstn,
@@ -37,6 +38,7 @@ module osc_top
   input  wire [S_AXIS_DATA_BITS-1:0]      cfg_trig_high_level_i   ,
   input  wire                             cfg_trig_edge_i         ,
   input  wire                             cfg_trigger_mode_i      ,
+  input  wire [              16-1:0]      cfg_trig_blocks_i       ,
   output wire                             sts_armed_o             ,
 
   input  wire [    DEC_CNT_BITS-1:0]      cfg_dec_factor_i        ,
@@ -70,6 +72,8 @@ module osc_top
   output wire [              32-1:0]      buf2_ms_cnt_o           ,
   output wire [              64-1:0]      buf1_timestamp_o        ,
   output wire [              64-1:0]      buf2_timestamp_o        ,
+  output wire [              64-1:0]      buf1_lost_o             ,
+  output wire [              64-1:0]      buf2_lost_o             ,
 
   output wire [              32-1:0]      curr_wp_o               ,
   output wire [              32-1:0]      diag1_o                 ,
@@ -105,6 +109,39 @@ module osc_top
   output wire                             m_axi_bready       
 );
 
+// The configuration of the data path does not change while the core runs: it is registered
+// here, so the 250 MHz paths start at a local register (timing of the 250-12); keep: one
+// copy per channel, next to its data path
+(* keep = "true" *) reg  [TRIG_CNT_BITS-1:0] cfg_trig_pre_samp_r;
+(* keep = "true" *) reg  [TRIG_CNT_BITS-1:0] cfg_trig_post_samp_r;
+(* keep = "true" *) reg  [S_AXIS_DATA_BITS-1:0] cfg_trig_low_level_r;
+(* keep = "true" *) reg  [S_AXIS_DATA_BITS-1:0] cfg_trig_high_level_r;
+(* keep = "true" *) reg  cfg_trig_edge_r;
+(* keep = "true" *) reg  [DEC_CNT_BITS-1:0] cfg_dec_factor_r;
+(* keep = "true" *) reg  [DEC_SHIFT_BITS-1:0] cfg_dec_rshift_r;
+(* keep = "true" *) reg  cfg_avg_en_r;
+(* keep = "true" *) reg  cfg_hres_en_r;
+(* keep = "true" *) reg  cfg_legacy_calib_r;
+(* keep = "true" *) reg  [16-1:0] cfg_calib_offset_r;
+(* keep = "true" *) reg  [16-1:0] cfg_calib_gain_r;
+(* keep = "true" *) reg  cfg_filt_bypass_r;
+always @(posedge clk_adc)
+begin
+  cfg_trig_pre_samp_r <= cfg_trig_pre_samp_i;
+  cfg_trig_post_samp_r <= cfg_trig_post_samp_i;
+  cfg_trig_low_level_r <= cfg_trig_low_level_i;
+  cfg_trig_high_level_r <= cfg_trig_high_level_i;
+  cfg_trig_edge_r <= cfg_trig_edge_i;
+  cfg_dec_factor_r <= cfg_dec_factor_i;
+  cfg_dec_rshift_r <= cfg_dec_rshift_i;
+  cfg_avg_en_r <= cfg_avg_en_i;
+  cfg_hres_en_r <= cfg_hres_en_i;
+  cfg_legacy_calib_r <= cfg_legacy_calib_i;
+  cfg_calib_offset_r <= cfg_calib_offset_i;
+  cfg_calib_gain_r <= cfg_calib_gain_i;
+  cfg_filt_bypass_r <= cfg_filt_bypass_i;
+end
+
 ////////////////////////////////////////////////////////////
 // Signals
 ////////////////////////////////////////////////////////////
@@ -122,6 +159,10 @@ wire                        event_sts_start;
 wire                        event_sts_reset;
 wire                        ctl_trg;
 wire                        accepted_trigger;
+wire                        trig_taken;
+wire                        acq_drop;
+// one DMA buffer in samples: the blocks of the block mode end on buffer boundaries
+wire [              32-1:0] block_samples = cfg_8bit_dat_i ? cfg_dma_buf_size_i : {1'b0, cfg_dma_buf_size_i[32-1:1]};
 
 wire [31:0]                 cfg_dma_diags;
 
@@ -167,7 +208,8 @@ reg [32-1:0]                intr_cnt;
 
 reg [32-1:0]                curr_wp_r1, curr_wp_r2;
 
-always @(posedge clk_adc)
+// the write address is in the AXI clock domain, and so is the register read of it
+always @(posedge clk_axi)
 begin
   curr_wp_r1 <= m_axi_awaddr;
   curr_wp_r2 <= curr_wp_r1;
@@ -217,7 +259,10 @@ begin
     dec_test <= dec_tdata;
 end
 
-assign external_trig_val = trig_ip[5] & (trig_mask_i == 'h20);
+// The daisy chain slave starts its DMA on the external trigger when that is its only source.
+// In the trigger mode the external trigger only starts the writing (osc_acquire): a DMA
+// restart there would leave the wait without writing anything.
+assign external_trig_val = trig_ip[5] & (trig_mask_i == 'h20) & ~cfg_trigger_mode_i;
 
 assign ramp_en       = cfg_loopback_i[2];
 assign loopback_gpio = cfg_loopback_i[1];
@@ -230,7 +275,9 @@ assign diag2_o = trig_cnt;
 assign diag3_o = clk_cnt;
 assign diag4_o = cfg_dma_diags;
 
-reg rstn_fil, rstn_cal, rstn_dec, rstn_trg, rstn_acq, rstn_smm;
+// separate reset registers: keep stops synthesis from merging them into one net that reaches
+// both channels and the timestamps, max_fanout lets the placer replicate them further
+(* keep = "true", max_fanout = 64 *) reg rstn_fil, rstn_cal, rstn_dec, rstn_trg, rstn_acq, rstn_smm;
 always @(posedge clk_adc) // resolve high fanout timing issues
 begin
   rstn_fil <= adc_rstn;
@@ -266,13 +313,16 @@ osc_calib #(
   .m_axis_tvalid    (calib_tvalid),
   .m_axis_tready    (calib_tready),
   // Config
-  .cfg_calib_offset (cfg_calib_offset_i), 
-  .cfg_calib_gain   (cfg_calib_gain_i));
+  .cfg_calib_offset (cfg_calib_offset_r), 
+  .cfg_calib_gain   (cfg_calib_gain_r));
 
-assign filt_in_tdata  = cfg_legacy_calib_i ? s_axis_tdata  : calib_tdata;
-assign filt_in_tvalid = cfg_legacy_calib_i ? s_axis_tvalid : calib_tvalid;
+assign filt_in_tdata  = cfg_legacy_calib_r ? s_axis_tdata  : calib_tdata;
+assign filt_in_tvalid = cfg_legacy_calib_r ? s_axis_tvalid : calib_tvalid;
 
-osc_filter i_dfilt (
+// the filter is not built on the 250-12: no front end filter to equalize (profile:
+// is_fast_adc_filter_present = false, the server always bypasses it) and its IIR loops do not
+// run at 250 MHz; the Ti boards (125 MHz and less) build it
+osc_filter #(.EN_FILTER (EN_FILTER)) i_dfilt (
    // ADC
   .clk              ( clk_adc     ),  // ADC clock
   .rst_n            ( rstn_fil    ),  // ADC reset - active low
@@ -285,7 +335,7 @@ osc_filter i_dfilt (
   .m_axis_tvalid    (filt_tvalid),
   .m_axis_tready    (filt_tready),
    // configuration
-  .cfg_bypass      ( cfg_filt_bypass_i   ),
+  .cfg_bypass      ( cfg_filt_bypass_r   ),
   .cfg_coeff_aa    ( cfg_filt_coeff_aa_i),  // config AA coefficient
   .cfg_coeff_bb    ( cfg_filt_coeff_bb_i ),  // config BB coefficient
   .cfg_coeff_kk    ( cfg_filt_coeff_kk_i ),  // config KK coefficient
@@ -303,11 +353,11 @@ osc_calib #(
   .m_axis_tdata     (legacy_calib_tdata),
   .m_axis_tvalid    (legacy_calib_tvalid),
   .m_axis_tready    (dec_tready),
-  .cfg_calib_offset (cfg_calib_offset_i),
-  .cfg_calib_gain   (cfg_calib_gain_i));
+  .cfg_calib_offset (cfg_calib_offset_r),
+  .cfg_calib_gain   (cfg_calib_gain_r));
 
-assign dec_src_tdata  = cfg_legacy_calib_i ? legacy_calib_tdata : filt_tdata;
-assign dec_src_tvalid = cfg_legacy_calib_i ? legacy_calib_tvalid : filt_tvalid;
+assign dec_src_tdata  = cfg_legacy_calib_r ? legacy_calib_tdata : filt_tdata;
+assign dec_src_tvalid = cfg_legacy_calib_r ? legacy_calib_tvalid : filt_tvalid;
 
 ////////////////////////////////////////////////////////////
 // Name : Decimation
@@ -315,10 +365,23 @@ assign dec_src_tvalid = cfg_legacy_calib_i ? legacy_calib_tvalid : filt_tvalid;
 ////////////////////////////////////////////////////////////
 assign dec_indata = ramp_en      ? ramp_sig     : 
                    (loopback_dac ? s_axis_tdata : dec_src_tdata);    
-wire signed [S_AXIS_DATA_BITS-1:0] trig_low_level =
-  cfg_hres_en_i ? ($signed(cfg_trig_low_level_i) <<< 2) : $signed(cfg_trig_low_level_i);
-wire signed [S_AXIS_DATA_BITS-1:0] trig_high_level =
-  cfg_hres_en_i ? ($signed(cfg_trig_high_level_i) <<< 2) : $signed(cfg_trig_high_level_i);
+reg signed [S_AXIS_DATA_BITS-1:0] trig_low_level;
+reg signed [S_AXIS_DATA_BITS-1:0] trig_high_level;
+always @(posedge clk_adc)
+begin
+  trig_low_level  <= cfg_hres_en_r ? ($signed(cfg_trig_low_level_r) <<< 2) : $signed(cfg_trig_low_level_r);
+  trig_high_level <= cfg_hres_en_r ? ($signed(cfg_trig_high_level_r) <<< 2) : $signed(cfg_trig_high_level_r);
+end
+
+// one register between the source selection and the decimator (timing at 250 MHz); the
+// stream does not stall, every source gets the same extra clock
+reg  [S_AXIS_DATA_BITS-1:0] dec_in_r;
+reg                         dec_in_valid_r;
+always @(posedge clk_adc)
+begin
+  dec_in_r       <= dec_indata;
+  dec_in_valid_r <= dec_src_tvalid;
+end
 
 osc_decimator #(
   .AXIS_DATA_BITS (S_AXIS_DATA_BITS), 
@@ -327,17 +390,17 @@ osc_decimator #(
   U_osc_decimator(
   .clk            (clk_adc),                   
   .rst_n          (rstn_dec),        
-  .s_axis_tdata   (dec_indata),          
-  .s_axis_tvalid  (dec_src_tvalid),     
+  .s_axis_tdata   (dec_in_r),
+  .s_axis_tvalid  (dec_in_valid_r),
   .s_axis_tready  (filt_tready),                                                                 
   .m_axis_tdata   (dec_tdata),          
   .m_axis_tvalid  (dec_tvalid),    
   .m_axis_tready  (dec_tready),      
   .ctl_rst        (event_num_reset),                                                                     
-  .cfg_avg_en     (cfg_avg_en_i),            
-  .cfg_hres_en    (cfg_hres_en_i),
-  .cfg_dec_factor (cfg_dec_factor_i),        
-  .cfg_dec_rshift (cfg_dec_rshift_i));       
+  .cfg_avg_en     (cfg_avg_en_r),            
+  .cfg_hres_en    (cfg_hres_en_r),
+  .cfg_dec_factor (cfg_dec_factor_r),        
+  .cfg_dec_rshift (cfg_dec_rshift_r));       
 
 ////////////////////////////////////////////////////////////
 // Name : Trigger
@@ -353,7 +416,7 @@ osc_trigger #(
   .ctl_rst              (event_num_reset),                                                    
   .cfg_trig_low_level   (trig_low_level),          
   .cfg_trig_high_level  (trig_high_level),         
-  .cfg_trig_edge        (cfg_trig_edge_i),                                                 
+  .cfg_trig_edge        (cfg_trig_edge_r),                                                 
   .trig                 (trig_op),                                                    
   .s_axis_tdata         (dec_tdata),                
   .s_axis_tvalid        (dec_tvalid),               
@@ -385,9 +448,11 @@ osc_acquire #(
   .ctl_stop               (event_num_stop),
   .ctl_trig               (ctl_trg),
   .cfg_trigger_mode       (cfg_trigger_mode_i),
+  .cfg_trig_blocks        (cfg_trig_blocks_i),
+  .cfg_block_samples      (block_samples),
   .cfg_mode               (dma_mode),
-  .cfg_trig_pre_samp      (cfg_trig_pre_samp_i),  
-  .cfg_trig_post_samp     (cfg_trig_post_samp_i),   
+  .cfg_trig_pre_samp      (cfg_trig_pre_samp_r),  
+  .cfg_trig_post_samp     (cfg_trig_post_samp_r),   
   .sts_start              (event_sts_start), 
   .sts_stop               (event_sts_stop),
   .sts_trig               (event_sts_trig),
@@ -396,7 +461,9 @@ osc_acquire #(
   .sts_trig_post_cnt      (sts_trig_post_cnt_o),
   .sts_trig_post_overflow (sts_trig_post_overflow_o),
   .sts_armed              (sts_armed_o),
-  .accepted_trigger       (accepted_trigger));
+  .accepted_trigger       (accepted_trigger),
+  .sts_drop               (acq_drop),
+  .trig_taken             (trig_taken));
   
 ////////////////////////////////////////////////////////////
 // Name : DMA S2MM
@@ -432,6 +499,10 @@ rp_dma_s2mm #(
   .buf2_ms_cnt    (buf2_ms_cnt_o),
   .buf1_timestamp (buf1_timestamp_o),
   .buf2_timestamp (buf2_timestamp_o),
+  .s_axis_drop    (acq_drop),
+  .s_axis_flush   (sts_armed_o),
+  .buf1_lost      (buf1_lost_o),
+  .buf2_lost      (buf2_lost_o),
   .buf_sel_in     (buf_sel_in),
   .buf_sel_out    (buf_sel_out),
   .m_axi_awaddr   (m_axi_awaddr), 
@@ -474,5 +545,5 @@ assign ctl_rst = event_num_reset;
 assign event_sts_reset = 0;
 
 assign ctl_trg = event_num_trig | |(trig_ip & trig_mask_i);
-assign trig_o  = cfg_trigger_mode_i ? accepted_trigger : ctl_start_o;
+assign trig_o  = cfg_trigger_mode_i ? trig_taken : ctl_start_o;
 endmodule

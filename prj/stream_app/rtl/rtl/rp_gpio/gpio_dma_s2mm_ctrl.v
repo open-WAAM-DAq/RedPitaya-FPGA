@@ -40,6 +40,12 @@ module gpio_dma_s2mm_ctrl
   input  wire                       buf_sel_in,
   output wire                       buf_sel_out,
   output reg                        fifo_dis,
+  input  wire [9:0]                 upsized_samples, // samples of the 64 bit word written to the FIFO
+  input  wire [26:0]                fifo_samples,    // samples held in the data FIFO
+  input  wire [8:0]                 drop_i,          // samples dropped while waiting for a trigger
+  input  wire                       flush_i,         // no more data before the next trigger: send a last full burst
+  output reg  [63:0]                buf1_lost,       // samples lost right before buffer 1, latched with its first request
+  output reg  [63:0]                buf2_lost,
   //
   output wire [(AXI_ADDR_BITS-1):0] m_axi_awaddr,     
   output reg  [7:0]                 m_axi_awlen,      
@@ -330,7 +336,9 @@ begin
     BUF_FILLING: begin
       if (reg_ctrl[CTRL_RESET])
           state_ns = IDLE;
-      else if (fifo_lvl > AXI_BURST_LEN) begin // if next buffer is full, then wait
+      // A last burst at the end of a series of the block mode is sent too: nothing
+      // follows it until the next trigger.
+      else if ((fifo_lvl > AXI_BURST_LEN) || (flush_i && (fifo_lvl >= AXI_BURST_LEN))) begin
         state_ns = WAIT_DATA_RDY; // wait for FIFO 
       end
     end
@@ -402,6 +410,52 @@ begin
       transf_end <= 1'b1;
     else 
       transf_end <= 1'b0;
+  end
+end
+
+////////////////////////////////////////////////////////////
+// Name : 64 bit lost sample counter
+// Counts the samples that were not written: words dropped while the next
+// buffer is not free, the words in the FIFO when it is reset after the last
+// transfer to a buffer whose next one is not free, and the words dropped while
+// the input waits for a trigger. A word stands for count + 1 samples. The count
+// is latched into the register of a buffer with its first request, so it holds
+// the samples lost right before that buffer. It does not saturate.
+////////////////////////////////////////////////////////////
+
+wire          buf_first_req = (m_axi_awvalid & m_axi_awready) &
+                              (((req_buf_addr_sel == 1'b0) & (req_addr == reg_dst_addr1)) |
+                               ((req_buf_addr_sel == 1'b1) & (req_addr == reg_dst_addr2)));
+// exactly the words the FIFO does not take (its write enable is upsized_we && ~fifo_dis);
+// a word arriving with the last beat (full_immed) still enters the FIFO and is counted
+// with the FIFO content when the FIFO is reset
+wire          word_lost     = fifo_dis && upsized_we && ~first_rst;
+// the whole count runs a clock late (timing: the address compare and the 64 bit adder in
+// separate clocks); it latches the same values
+reg           first_d, first_sel_d;
+reg  [27:0]   add_d;
+reg  [64-1:0] lost_run;
+
+always @(posedge m_axi_aclk)
+begin
+  first_d     <= buf_first_req;
+  first_sel_d <= req_buf_addr_sel;
+  add_d       <= (word_lost ? upsized_samples : 10'd0) + drop_i
+               + ((axi_last_r2 && next_buf_full) ? fifo_samples : 27'd0);
+end
+
+always @(posedge m_axi_aclk)
+begin
+  if ((m_axi_aresetn == 0) || (state_cs == IDLE)) begin
+    lost_run  <= 64'd0;
+    buf1_lost <= 64'd0;
+    buf2_lost <= 64'd0;
+  end else begin
+    if (first_d && (first_sel_d == 1'b0))
+      buf1_lost <= lost_run;
+    if (first_d && (first_sel_d == 1'b1))
+      buf2_lost <= lost_run;
+    lost_run <= (first_d ? 64'd0 : lost_run) + add_d;
   end
 end
 

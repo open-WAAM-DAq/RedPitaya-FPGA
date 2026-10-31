@@ -11,6 +11,7 @@ module rp_dma_s2mm_upsize
   output reg                        req_we,
   output      [1:0]                 upsize_lvl,
   input  wire                       use_8bit,
+  input  wire [63:0]                ts_i,          // timestamp of the sample at the input
 
   input  wire [AXIS_DATA_BITS-1:0]  s_axis_tdata,
   input  wire                       s_axis_tvalid,
@@ -18,6 +19,7 @@ module rp_dma_s2mm_upsize
   input  wire                       s_axis_tlast,    
   
   output wire [AXI_DATA_BITS-1:0]   m_axis_tdata,
+  output reg  [63:0]                m_axis_tts,    // timestamp of the first sample of the word
   output reg                        m_axis_tvalid,
   input  wire                       m_axis_tready 
 );
@@ -96,6 +98,23 @@ begin
       req_we <= 0;  
     end
   end
+end
+
+////////////////////////////////////////////////////////////
+// Name : Word timestamp
+// The timestamp of the first sample of a word travels with it through the
+// data FIFO: the buffer timestamp is taken from the first word written to
+// the buffer.
+////////////////////////////////////////////////////////////
+
+reg  [63:0] ts_word;
+
+always @(posedge clk)
+begin
+  if (input_transfer && (mux_sel == 0))
+    ts_word <= ts_i;
+  if (word_complete)
+    m_axis_tts <= (mux_sel == 0) ? ts_i : ts_word;
 end
 
 ////////////////////////////////////////////////////////////

@@ -6,7 +6,10 @@
 
 module la_trg #(
   int unsigned DN = 1,
-  type DT = logic [8-1:0]  // sti.dat type
+  type DT = logic [8-1:0],  // sti.dat type
+  // 1: with no edge configured the comparator alone triggers (a level/pattern
+  // trigger); 0: an edge is always required
+  bit LEVEL_ONLY = 0
 )(
   // control
   input  logic          ctl_rst,  // synchronous reset
@@ -32,8 +35,9 @@ for (genvar i=0; i<DN; i++) begin: for_dn
 
 // comparator
 assign sts_cmp [i] = (sti.TDATA[i] & cfg_cmp_msk) == (cfg_cmp_val & cfg_cmp_msk);
-// edge detection
-assign sts_edg [i] = |(cfg_edg_pos & (~dat[i] &  dat[i+1]))
+// edge detection; a level-only setup needs a non-empty comparator mask
+assign sts_edg [i] = (LEVEL_ONLY && ~|{cfg_edg_pos, cfg_edg_neg}) ? |cfg_cmp_msk
+                   : |(cfg_edg_pos & (~dat[i] &  dat[i+1]))
                    | |(cfg_edg_neg & ( dat[i] & ~dat[i+1]));
 
 end: for_dn

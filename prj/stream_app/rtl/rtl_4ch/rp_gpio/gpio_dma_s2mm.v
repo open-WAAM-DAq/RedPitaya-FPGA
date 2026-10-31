@@ -33,6 +33,10 @@ module gpio_dma_s2mm
   output wire [31:0]                    buf2_ms_cnt,
   input  wire                           buf_sel_in,
   output wire                           buf_sel_out,
+  input  wire [8:0]                     drop_i,
+  input  wire                           flush_i,
+  output wire [63:0]                    buf1_lost,
+  output wire [63:0]                    buf2_lost,
   //                                        
   output wire [(AXI_ADDR_BITS-1):0]     m_axi_awaddr,     
   output wire [7:0]                     m_axi_awlen,      
@@ -87,6 +91,18 @@ assign                    buf1_ms_cnt = missed_samps_ch1 << shift;
 assign                    buf2_ms_cnt = missed_samps_ch2 << shift;
 
 assign m_axi_wdata  = fifo_rd_data;
+
+// samples in a 64 bit word: two 32 bit words {count, N, count, P} of count + 1 samples each
+wire [9:0]  wr_samples = fifo_wr_data[15:8] + fifo_wr_data[47:40] + 10'd2;
+wire [9:0]  rd_samples = fifo_rd_data[15:8] + fifo_rd_data[47:40] + 10'd2;
+reg  [26:0] fifo_samples;  // samples held in the data FIFO (first word fall through)
+
+always @(posedge m_axi_aclk)
+  if (fifo_rst)
+    fifo_samples <= 27'd0;
+  else
+    fifo_samples <= fifo_samples + ((fifo_wr_we && ~fifo_dis) ? wr_samples : 10'd0)
+                                 - (fifo_rd_re ? rd_samples : 10'd0);
 assign m_axi_wstrb  = {AXI_DATA_BITS/8{1'b1}};
 assign m_axi_bready = m_axi_bvalid;
 
@@ -135,6 +151,12 @@ gpio_dma_s2mm_ctrl #(
   .buf_sel_in     (buf_sel_in),
   .buf_sel_out    (buf_sel_out),
   .fifo_dis       (fifo_dis),
+  .upsized_samples(wr_samples),
+  .fifo_samples   (fifo_samples),
+  .drop_i         (drop_i),
+  .flush_i        (flush_i),
+  .buf1_lost      (buf1_lost),
+  .buf2_lost      (buf2_lost),
   .m_axi_awaddr   (m_axi_awaddr),       
   .m_axi_awlen    (m_axi_awlen),        
   .m_axi_awsize   (m_axi_awsize),       

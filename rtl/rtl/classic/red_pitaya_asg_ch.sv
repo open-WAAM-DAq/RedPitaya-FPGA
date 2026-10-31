@@ -41,6 +41,16 @@
 `define RP_ASG_TIMING_PIPELINE
 `define RP_ASG_TRIG_SELECT
 `endif
+// Z10 and Z20_14 missed timing on the same read pointer cone (dac_pnt clock
+// enable, -0.011 / -0.058 ns) once the ADC to DAC loopback paths were timed.
+`ifdef Z10
+`define RP_ASG_TIMING_PIPELINE
+`define RP_ASG_TRIG_SELECT
+`endif
+`ifdef Z20_14
+`define RP_ASG_TIMING_PIPELINE
+`define RP_ASG_TRIG_SELECT
+`endif
 
 module red_pitaya_asg_ch #(
    parameter RSZ = 14

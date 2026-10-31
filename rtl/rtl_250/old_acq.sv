@@ -135,8 +135,22 @@ assign nxt_pre = sts_pre + 1;
 assign nxt_pst = sts_pst + 1;
 
 // counter ends
-assign end_pre = (nxt_pre == cfg_pre);
-assign end_pst = (nxt_pst == cfg_pst);
+// nxt == cfg is sts == cfg - 1 (modulo 2**CW).  Comparing the counter itself
+// against a registered cfg - 1 keeps the increment carry chain out of the
+// stop decision, which feeds the clock enables of the counters and the
+// timestamps and did not fit at 250 MHz.  The configuration is written long
+// before an acquisition starts, so the extra register is not visible.
+logic [CW-1:0] cfg_pre_m1;
+logic [CW-1:0] cfg_pst_m1;
+
+always @(posedge sti.ACLK)
+begin
+  cfg_pre_m1 <= cfg_pre - 1;
+  cfg_pst_m1 <= cfg_pst - 1;
+end
+
+assign end_pre = (sts_pre == cfg_pre_m1);
+assign end_pst = (sts_pst == cfg_pst_m1);
 
 // interrupts
 assign irq_trg = trg;  // trigger

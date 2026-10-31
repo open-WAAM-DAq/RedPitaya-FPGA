@@ -15,19 +15,42 @@ module gpio_dma_mm2s_downsize
     
   output reg  [AXIS_DATA_BITS-1:0]  m_axis_tdata,
   output wire                       m_axis_tvalid,
-  input  wire                       m_axis_tready 
+  input  wire                       m_axis_tready,
+
+  // trigger mode: after the FIFO filled up the output waits for a rising edge of the trigger
+  input  wire                       trigger_mode_i,
+  input  wire                       trigger_i,
+  output wire                       armed_o
 );
 
 reg  [2:0]  rd_cnt;
-reg  [2:0]  empty_reg;
-reg         first_full, full_r, full_r2;
+reg         first_full;
 
 
-// FIFO read pulse
-assign fifo_rd_re     = (rd_cnt == 'd1) & m_axis_tready & first_full; 
+reg         started, trigger_d1;
+// plays once the FIFO is full, in the trigger mode only after the trigger; clearing the
+// trigger mode while armed starts at once (as the DAC)
+wire        play = first_full & (~trigger_mode_i | started);
 
-// enable RLE when FIFO is filled up
-assign m_axis_tvalid  = first_full;
+always @(posedge clk)
+begin
+  if (rst == 0) begin
+    started    <= 1'b0;
+    trigger_d1 <= 1'b0;
+  end else begin
+    trigger_d1 <= trigger_i;
+    if (first_full & trigger_mode_i & trigger_i & ~trigger_d1)
+      started <= 1'b1;
+  end
+end
+
+assign armed_o = trigger_mode_i & first_full & ~started;
+
+// FIFO read pulse: the upper half of a word is taken
+assign fifo_rd_re     = (rd_cnt == 'd1) & m_axis_tready & m_axis_tvalid;
+
+// a half word is offered while the FIFO (first word fall through) holds data
+assign m_axis_tvalid  = play & ~fifo_empty;
 
 // must wait to fill up the FIFO before starting to read
 always @(posedge clk)
@@ -40,52 +63,21 @@ begin
   end
 end
 
-always @(posedge clk)
-  full_r <= first_full;
-
-always @(posedge clk)
-begin
-  if (rst == 0) begin
-    first_full <= 'b0;
-  end else begin 
-    if (fifo_full & ~fifo_empty & ~first_full)
-      first_full <= 'h1;
-  end
-end
-
-// FIFO empty, delayed
+// output select counter: downsize from 64 to 32 bit
 always @(posedge clk)
 begin
   if (rst == 0)
-    empty_reg <= 'b111;
-  else 
-    empty_reg <= {empty_reg[1:0], fifo_empty};
-end
-
-
-
-
-// output select counter
-always @(posedge clk)
-begin
-  if (rst == 0) begin
     rd_cnt <= 'd0;
-  end else begin 
-    if (~empty_reg[2] & first_full) begin
-      if (rd_cnt == 'd0 && m_axis_tready) // downsize from 64 to 32 bit. 
-        rd_cnt <= rd_cnt + 1;
-      else if (rd_cnt >= 'd1 && m_axis_tready)
-        rd_cnt <= 'd0;      
-    end
-  end 
+  else if (m_axis_tvalid & m_axis_tready)
+    rd_cnt <= (rd_cnt == 'd0) ? 'd1 : 'd0;
 end
 
 // output data mux
-always @(posedge clk)
+always @(*)
 begin
   case(rd_cnt)
-    'd0: m_axis_tdata <= fifo_rd_data[31: 0];
-    'd1: m_axis_tdata <= fifo_rd_data[63:32];
+    'd1:     m_axis_tdata = fifo_rd_data[63:32];
+    default: m_axis_tdata = fifo_rd_data[31: 0];
   endcase
 end
 

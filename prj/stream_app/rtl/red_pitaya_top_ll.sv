@@ -72,6 +72,7 @@ module red_pitaya_top_ll #(
   output logic [ 2-1:0] daisy_n_o  ,
   input  logic [ 2-1:0] daisy_p_i  ,  // line 1 is clock capable
   input  logic [ 2-1:0] daisy_n_i  ,
+  output logic          out_sync_o ,  // clock generator enable
   // PLL
   output logic          clk_sel_o  ,  // 1-internal 0-external
   output logic          pll_hi_o   ,
@@ -123,11 +124,20 @@ wire trig_out;
 wire gpio_trig;
 wire clk_125;
 wire trig_ext;
+wire adc_clk_daisy;
+wire rstn_0;
+wire adc_clk;
+wire dac_clk_1p;
+wire dac_axi_clk;
+wire ser_clk;
+wire pwm_clk;
+wire idly_rdy;
+wire par_clk;   // ADC parallel clock: 125 MHz on the 125-14 TI, 62.5 MHz on the 65-16 TI
 
 localparam            ADC_IDLY = 5'h2;
 logic [26-1:0]        ser_ddly = {1'b0,{5{ADC_IDLY}}};
 logic [ 5-1:0]        ser_inv  = 5'h8;
-logic                 bitslip;
+logic [ 3-1:0]        bitslip;
 
 ////////////////////////////////////////////////////////////////////////////////
 // PLL (clock and reset)
@@ -273,7 +283,8 @@ adc366x_top i_adc366x
    // parallel ports
   .adc_clk_i       (  adc_clk        ),  //!< parallel clock
   .adc_dat_o       (  adc_dat_raw    ),  //!< parallel data
-  .adc_dv_o        (  adc_dat_rdv    )   //!< parallel valid
+  .adc_dv_o        (  adc_dat_rdv    ),  //!< parallel valid
+  .par_clk_o       (  par_clk        )   //!< parallel clock (ADC DCLK / 4)
 );
 
 
@@ -287,18 +298,19 @@ assign adc_rst_o   = 1'b0 ;   // ADC reset
 assign adc_pdn_o   = 1'b0 ;   // ADC power down
 
 
-always @(posedge clk_125) begin
-  //adc_dat_ch1_r <= adc_dat_i[0];
-  //adc_dat_ch2_r <= adc_dat_i[1];
-  if (loopback_sel_ch1[1])
-    adc_dat_ch1 <= {dac_dat_a[16-1],     ~dac_dat_a[16-2:2]};
-  else
-    adc_dat_ch1 <= adc_dat_raw[0][16-1 -: 14];
+// The scope runs on the ADC clock and takes the 16 bit two's complement samples as they
+// are. The DAC to ADC loopback (a test path) carries the DAC data from clk_125 through two
+// registers, as v0.94 does.
+(* ASYNC_REG = "TRUE" *) reg [16-1:0] loop_a_meta, loop_a_sync;
+(* ASYNC_REG = "TRUE" *) reg [16-1:0] loop_b_meta, loop_b_sync;
 
-  if (loopback_sel_ch2[1])
-    adc_dat_ch2 <= {dac_dat_b[16-1],     ~dac_dat_b[16-2:2]};
-  else
-    adc_dat_ch2 <= adc_dat_raw[1][16-1 -: 14];
+always @(posedge par_clk) begin
+  loop_a_meta <= dac_dat_a;
+  loop_a_sync <= loop_a_meta;
+  loop_b_meta <= dac_dat_b;
+  loop_b_sync <= loop_b_meta;
+  adc_dat_ch1 <= loopback_sel_ch1[1] ? loop_a_sync : adc_dat_raw[0];
+  adc_dat_ch2 <= loopback_sel_ch2[1] ? loop_b_sync : adc_dat_raw[1];
 end
 
 reg [10-1:0] daisy_cnt      =  'h0;
@@ -325,6 +337,8 @@ assign led_o = {5'h0,daisy_slave,~rstn_0,clk_rec_blnk};
 // External PLL
 
 assign clk_sel_o = 1'bz;  // High-Z, controlled from Expansion IO
+// enables the board clock generator: without it there is no ADC nor DAC clock
+assign out_sync_o = 1'b1;
 assign pll_hi_o  = 1'b0;
 assign pll_lo_o  = 1'b1;
 
@@ -369,6 +383,7 @@ assign pll_lo_o  = 1'b1;
         .clksel(clksel),
         .daisy_slave(daisy_slave),
         .adc_clk(dac_clk_in),
+        .osc_clk(par_clk),
         .clk_out(clk_125),
         .rstn_out(rstn_0),
         .dac_dat_a(dac_dat_a),
@@ -379,14 +394,14 @@ assign pll_lo_o  = 1'b1;
         .adc_data_ch1(adc_dat_ch1),
         .adc_data_ch2(adc_dat_ch2));
 
-OBUFDS #(.IOSTANDARD ("DIFF_HSTL18_I"), .SLEW ("FAST")) i_OBUF_trig
+OBUFDS #(.IOSTANDARD ("DIFF_HSTL_I_18"), .SLEW ("FAST")) i_OBUF_trig
 (
   .O  ( daisy_p_o[0]  ),
   .OB ( daisy_n_o[0]  ),
   .I  ( trig_out      )
 );
 
-OBUFDS #(.IOSTANDARD ("DIFF_HSTL18_I"), .SLEW ("FAST")) i_OBUF_clk
+OBUFDS #(.IOSTANDARD ("DIFF_HSTL_I_18"), .SLEW ("FAST")) i_OBUF_clk
 (
   .O  ( daisy_p_o[1]  ),
   .OB ( daisy_n_o[1]  ),
@@ -400,14 +415,14 @@ OBUFDS #(.IOSTANDARD ("DIFF_HSTL18_I"), .SLEW ("FAST")) i_OBUF_clk
 //   .O  ( adc_clk_in    )
 // );
 
-IBUFDS #(.IOSTANDARD ("DIFF_HSTL18_I")) i_IBUF_clkdaisy
+IBUFDS #(.IOSTANDARD ("DIFF_HSTL_I_18")) i_IBUF_clkdaisy
 (
   .I  ( daisy_p_i[1]  ),
   .IB ( daisy_n_i[1]  ),
   .O  ( adc_clk_daisy )
 );
 
-IBUFDS #(.IOSTANDARD ("DIFF_HSTL18_I")) i_IBUFDS_trig
+IBUFDS #(.IOSTANDARD ("DIFF_HSTL_I_18")) i_IBUFDS_trig
 (
   .I  ( daisy_p_i[0]  ),
   .IB ( daisy_n_i[0]  ),

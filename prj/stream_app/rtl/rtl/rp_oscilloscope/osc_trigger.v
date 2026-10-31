@@ -44,8 +44,10 @@ assign trig_low_level     = cfg_trig_low_level;
 
 assign s_axis_tready      = 1;
 
+// trig_detect is set on the selected crossing in both modes (at or above the high level for
+// the rising edge, at or below the low level for the falling edge); the other level re-arms it
 assign trig_rising_edge   = trig_detect & ~trig_detect_p1 & ~cfg_trig_edge;
-assign trig_falling_edge  = ~trig_detect & trig_detect_p1 & cfg_trig_edge;
+assign trig_falling_edge  = trig_detect & ~trig_detect_p1 &  cfg_trig_edge;
 assign trig               = trig_rising_edge | trig_falling_edge;
 
 always @(posedge clk)

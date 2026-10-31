@@ -99,9 +99,12 @@ if {$prj_name == "stream_app"} {
 }
 
 if {$prj_name == "logic"} {
-   # adc_clk is 250 MHz on this board, and clk1_freq keeps the 250 MHz default
-   # to match it: the only model where the two are equal.
    set ::logic_freq 250000000
+   # AXI/DMA subsystem clock as on the other boards: at 250 MHz the AXI DMA and
+   # the HP ports missed timing by 0.65 ns.  The LA stream (16 bit at 250 MHz)
+   # is widened to 64 bit in the ADC clock domain to keep its full rate.
+   set ::clk1_freq 125000000
+   set ::la_dma_bytes 8
 }
 
 set_property verilog_define [concat Z20_250 $prj_defs] [current_fileset]
@@ -247,6 +250,14 @@ foreach file $rptFiles {
 # report utilization and timing estimates
 # write checkpoint design
 ################################################################################
+
+# The scope and the DAC run at 250 MHz: physical optimization after placement and
+# after routing adds margin.  v0.94 missed timing by 0.05 ns without it, on paths
+# that moved between the two board revisions with the placement.
+set_property STEPS.PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
+set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
+set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
+set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
 
 launch_runs impl_1
 wait_on_run impl_1

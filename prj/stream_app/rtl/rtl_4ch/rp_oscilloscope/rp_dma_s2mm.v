@@ -22,7 +22,7 @@ module rp_dma_s2mm
   input  wire [31:0]                    reg_dst_addr1,  
   input  wire [31:0]                    reg_dst_addr2,  
   input  wire [31:0]                    reg_buf_size,
-  input  wire [63:0]                    timestamp_counter,
+  input  wire [63:0]                    timestamp_counter,  // in the stream clock domain
   input  wire [63:0]                    timestamp_init,
   input  wire                           timestamp_init_we,
   output wire                           ctl_start_o,
@@ -34,6 +34,10 @@ module rp_dma_s2mm
   output wire [31:0]                    buf2_ms_cnt,
   output wire [63:0]                    buf1_timestamp,
   output wire [63:0]                    buf2_timestamp,
+  input  wire                           s_axis_drop,
+  input  wire                           s_axis_flush,
+  output wire [63:0]                    buf1_lost,
+  output wire [63:0]                    buf2_lost,
   input  wire                           buf_sel_in,
   output wire                           buf_sel_out,
   //                                        
@@ -72,6 +76,12 @@ localparam FIFO_CNT_BITS = 10;  // Size of the FIFO data counter
 
 wire                      fifo_rst;
 wire [AXI_DATA_BITS-1:0]  fifo_wr_data; 
+wire [63:0]               fifo_wr_ts;     // timestamp of the first sample of the word
+wire [63:0]               fifo_rd_ts;
+wire                      fifo_wr_en;
+wire                      fifo_wr_ok;
+wire                      fifo_full;
+reg  [31:0]               fifo_wr_words;  // words the data FIFO took, free running
 wire                      fifo_wr_we;
 wire [AXI_DATA_BITS-1:0]  fifo_rd_data;
 wire                      fifo_rd_re;
@@ -93,6 +103,46 @@ assign                    buf1_ms_cnt = missed_samps_ch1 << shift;
 assign                    buf2_ms_cnt = missed_samps_ch2 << shift;
 
 assign m_axi_wdata  = fifo_rd_data;
+
+////////////////////////////////////////////////////////////
+// Name : Lost samples, stream clock domain
+// Words the FIFO does not take (the same condition as its write enable) and
+// samples dropped while the acquisition waits for a trigger are summed in the
+// stream clock domain and handed over to the controller with a toggle handshake
+// (the 250-12 runs the stream at 250 MHz and the AXI side at 125 MHz).
+////////////////////////////////////////////////////////////
+
+wire        first_rst;
+reg  [ 2:0] first_rst_s;
+reg  [ 2:0] lost_ack_s;
+reg  [15:0] lost_acc, lost_xfer;
+reg         lost_req;
+reg  [ 2:0] lost_req_m;
+reg  [15:0] lost_add;
+reg         lost_add_we;
+wire [15:0] lost_now = ((fifo_wr_we && ~fifo_wr_ok && ~first_rst_s[2]) ? (use_8bit ? 16'd8 : 16'd4) : 16'd0)
+                     + s_axis_drop;
+
+always @(posedge s_axis_aclk) begin
+  first_rst_s <= {first_rst_s[1:0], first_rst};
+  lost_ack_s  <= {lost_ack_s[1:0], lost_req_m[2]};
+  if (~aresetn) begin
+    lost_acc <= 16'd0;
+    lost_req <= 1'b0;
+  end else if ((lost_req == lost_ack_s[2]) && ((lost_acc != 16'd0) || (lost_now != 16'd0))) begin
+    lost_xfer <= lost_acc + lost_now;
+    lost_acc  <= 16'd0;
+    lost_req  <= ~lost_req;
+  end else begin
+    lost_acc  <= lost_acc + lost_now;
+  end
+end
+
+always @(posedge m_axi_aclk) begin
+  lost_req_m  <= {lost_req_m[1:0], lost_req};
+  lost_add_we <= lost_req_m[2] ^ lost_req_m[1];
+  lost_add    <= lost_xfer;  // stable since before the toggle
+end
 assign m_axi_wstrb  = {AXI_DATA_BITS/8{1'b1}};
 assign m_axi_bready = m_axi_bvalid;
 
@@ -129,7 +179,8 @@ rp_dma_s2mm_ctrl #(
   .reg_dst_addr1  (reg_dst_addr1),  
   .reg_dst_addr2  (reg_dst_addr2),  
   .reg_buf_size   (reg_buf_size), 
-  .timestamp_counter (timestamp_counter),
+  .data_ts        (fifo_rd_ts),
+  .fifo_wr_words  (fifo_wr_words),
   .timestamp_init (timestamp_init),
   .timestamp_init_we (timestamp_init_we),
   .ctl_start_o    (ctl_start_o),  
@@ -146,6 +197,12 @@ rp_dma_s2mm_ctrl #(
   .buf2_ms_cnt    (missed_samps_ch2),
   .buf1_timestamp (buf1_timestamp),
   .buf2_timestamp (buf2_timestamp),
+  .lost_add       (lost_add),
+  .lost_add_we    (lost_add_we),
+  .first_rst_o    (first_rst),
+  .flush_i        (s_axis_flush),
+  .buf1_lost      (buf1_lost),
+  .buf2_lost      (buf2_lost),
   .buf_sel_in     (buf_sel_in),
   .buf_sel_out    (buf_sel_out),
   .fifo_dis       (fifo_dis),
@@ -176,11 +233,13 @@ rp_dma_s2mm_upsize #(
   .req_we         (req_we),
   .upsize_lvl     (upsize_lvl),
   .use_8bit       (use_8bit),
+  .ts_i           (timestamp_counter),
   .s_axis_tdata   (s_axis_tdata),      
   .s_axis_tvalid  (s_axis_tvalid),     
   .s_axis_tready  (s_axis_tready),     
   .s_axis_tlast   (s_axis_tlast),                 
   .m_axis_tdata   (fifo_wr_data),      
+  .m_axis_tts     (fifo_wr_ts),
   .m_axis_tvalid  (fifo_wr_we),     
   .m_axis_tready  (1'b1));      
 
@@ -194,10 +253,10 @@ fifo_axi_data
   .wr_clk         (s_axis_aclk),               
   .rd_clk         (m_axi_aclk),               
   .rst            (fifo_rst),     
-  .din            (fifo_wr_data),                     
-  .wr_en          (fifo_wr_we && ~fifo_dis),               
-  .full           (),   
-  .dout           (fifo_rd_data),    
+  .din            ({fifo_wr_ts, fifo_wr_data}),
+  .wr_en          (fifo_wr_en),
+  .full           (fifo_full),  // also high while the FIFO is in reset
+  .dout           ({fifo_rd_ts, fifo_rd_data}),
   .rd_en          (fifo_rd_re),                                 
   .empty          (fifo_empty),                 
   .rd_data_count  (fifo_rd_cnt), 
@@ -205,5 +264,16 @@ fifo_axi_data
   .rd_rst_busy    ());
   
 assign fifo_rd_re = m_axi_wvalid & m_axi_wready;  
+
+assign fifo_wr_en = fifo_wr_we && ~fifo_dis;
+// a word the FIFO does not take (disabled, in reset or full) is lost
+assign fifo_wr_ok = fifo_wr_en && ~fifo_full;
+
+always @(posedge s_axis_aclk) begin
+  if (~aresetn)
+    fifo_wr_words <= 32'd0;
+  else if (fifo_wr_ok)
+    fifo_wr_words <= fifo_wr_words + 32'd1;
+end
  
 endmodule
